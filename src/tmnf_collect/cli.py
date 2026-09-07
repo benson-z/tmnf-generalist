@@ -1,0 +1,187 @@
+"""Command line entry point."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from pathlib import Path
+
+from . import camera_check, collect as collect_mod, install, launcher, smoke
+from .paths import detect
+
+
+def _cmd_paths(args: argparse.Namespace) -> int:
+    layout = detect(game=args.game, profile=args.profile)
+    for field, value in vars(layout).items():
+        print(f"{field:16} {value}")
+    return 0
+
+
+def _cmd_launch(args: argparse.Namespace) -> int:
+    layout = detect(game=args.game, profile=args.profile)
+    instance = launcher.launch(
+        port=args.port, instance_id=args.id, layout=layout
+    )
+    print(f"pid={instance.pid} port={instance.port} token={instance.token}")
+    if args.wait:
+        while instance.is_alive():
+            time.sleep(1.0)
+        print("game exited")
+    return 0
+
+
+def _cmd_kill(_: argparse.Namespace) -> int:
+    print(f"killed {launcher.kill_all()} game process(es)")
+    return 0
+
+
+def _cmd_install_plugin(args: argparse.Namespace) -> int:
+    layout = detect(game=args.game, profile=args.profile)
+    print(f"installed {install.install(layout)}")
+    return 0
+
+
+def _cmd_collect(args: argparse.Namespace) -> int:
+    summary = collect_mod.collect(
+        Path(args.replays),
+        Path(args.out),
+        port=args.port,
+        width=args.width,
+        height=args.height,
+        period_ms=args.period,
+        speed=args.speed,
+        force_render=args.force_render,
+        limit=args.limit,
+        image_format=args.format,
+        quality=args.quality,
+        capture_log=args.log,
+        instances=args.instances,
+        resume=not args.no_resume,
+        progress=lambda r: print(
+            f"  [{r.instance}] {r.status:14} {r.output_name} "
+            f"samples={r.samples} {r.seconds}s {r.detail}",
+            flush=True,
+        ),
+    )
+    trimmed = {k: v for k, v in summary.items() if k != "results"}
+    print(json.dumps(trimmed, indent=2))
+    return 0 if not summary["by_status"].get("error") else 1
+
+
+def _cmd_camera(args: argparse.Namespace) -> int:
+    summary = camera_check.run(
+        out_dir=Path(args.out),
+        port=args.port,
+        width=args.width,
+        height=args.height,
+        samples=args.samples,
+        speed_up=args.speed_up,
+    )
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def _cmd_smoke(args: argparse.Namespace) -> int:
+    summary = smoke.run(
+        out_dir=Path(args.out),
+        port=args.port,
+        width=args.width,
+        height=args.height,
+        period_ms=args.period,
+        force_render=args.force_render,
+        max_samples=args.samples,
+        speed=args.speed,
+        keep_open=args.keep_open,
+    )
+    print(json.dumps(summary, indent=2))
+    return 0 if summary["samples"] else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="tmnf-collect")
+    parser.add_argument("--game", default="TmForever")
+    parser.add_argument("--profile", default=None)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_paths = sub.add_parser("paths", help="show detected install locations")
+    p_paths.set_defaults(func=_cmd_paths)
+
+    p_launch = sub.add_parser("launch", help="start one game instance")
+    p_launch.add_argument("--port", type=int, default=8477)
+    p_launch.add_argument("--id", type=int, default=0)
+    p_launch.add_argument("--wait", action="store_true")
+    p_launch.set_defaults(func=_cmd_launch)
+
+    p_kill = sub.add_parser("kill", help="terminate all game processes")
+    p_kill.set_defaults(func=_cmd_kill)
+
+    p_install = sub.add_parser(
+        "install-plugin", help="copy the collector plugin into TMInterface"
+    )
+    p_install.set_defaults(func=_cmd_install_plugin)
+
+    p_smoke = sub.add_parser(
+        "smoke", help="end-to-end check of the game -> controller bridge"
+    )
+    p_smoke.add_argument("--out", default="out/smoke")
+    p_smoke.add_argument("--port", type=int, default=8477)
+    p_smoke.add_argument("--width", type=int, default=320)
+    p_smoke.add_argument("--height", type=int, default=240)
+    p_smoke.add_argument("--period", type=int, default=50)
+    p_smoke.add_argument("--samples", type=int, default=120)
+    p_smoke.add_argument("--speed", type=float, default=1.0)
+    p_smoke.add_argument(
+        "--force-render",
+        action="store_true",
+        help="drive rendering from ticks instead of using the game's own frames",
+    )
+    p_smoke.add_argument("--keep-open", action="store_true")
+    p_smoke.set_defaults(func=_cmd_smoke)
+
+    p_camera = sub.add_parser(
+        "camera-check",
+        help="verify ForceGameRender does not disturb the camera",
+    )
+    p_camera.add_argument("--out", default="out/camera")
+    p_camera.add_argument("--port", type=int, default=8477)
+    p_camera.add_argument("--width", type=int, default=320)
+    p_camera.add_argument("--height", type=int, default=240)
+    p_camera.add_argument("--samples", type=int, default=100)
+    p_camera.add_argument("--speed-up", type=float, default=5.0)
+    p_camera.set_defaults(func=_cmd_camera)
+
+    p_collect = sub.add_parser(
+        "collect", help="record every replay under a folder into a dataset"
+    )
+    p_collect.add_argument("replays", help="a replay file, or a folder of them")
+    p_collect.add_argument("--out", default="out/dataset")
+    p_collect.add_argument("--port", type=int, default=8477)
+    p_collect.add_argument("--width", type=int, default=320)
+    p_collect.add_argument("--height", type=int, default=240)
+    p_collect.add_argument("--period", type=int, default=50)
+    p_collect.add_argument("--speed", type=float, default=1.0)
+    p_collect.add_argument("--limit", type=int, default=None)
+    p_collect.add_argument("--format", default="jpeg", choices=["jpeg", "png"])
+    p_collect.add_argument("--quality", type=int, default=90)
+    p_collect.add_argument(
+        "--instances",
+        type=int,
+        default=1,
+        help="game instances to run in parallel, one port each",
+    )
+    p_collect.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="re-record replays that already have a successful run",
+    )
+    p_collect.add_argument("--force-render", action="store_true")
+    p_collect.add_argument(
+        "--log",
+        action="store_true",
+        help="save the in-game console log to gamelog.txt",
+    )
+    p_collect.set_defaults(func=_cmd_collect)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
