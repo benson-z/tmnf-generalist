@@ -24,6 +24,8 @@ MSG_PONG = 0x05
 CMD_COMMAND = 0x10
 CMD_CONFIG = 0x11
 CMD_PING = 0x12
+CMD_FOCUS = 0x14
+CMD_PLAY = 0x13
 
 # event kinds
 EV_RUN_START = 1
@@ -229,6 +231,17 @@ def encode_config(**settings: object) -> bytes:
         parts.append(f"{key}={value}")
     body = ";".join(parts).encode("utf-8")
     return struct.pack("<BH", CMD_CONFIG, len(body)) + body
+
+
+def encode_play(script_name: str) -> bytes:
+    """Arm the plugin to replay an input script. Empty name disarms."""
+    body = script_name.encode("utf-8")
+    return struct.pack("<BH", CMD_PLAY, len(body)) + body
+
+
+def encode_focus() -> bytes:
+    """Bring this instance's game window to the foreground."""
+    return struct.pack("<BH", CMD_FOCUS, 0)
 
 
 def encode_ping(payload: str = "") -> bytes:

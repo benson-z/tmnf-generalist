@@ -96,6 +96,14 @@ class Controller:
         if settings:
             self._send(protocol.encode_config(**settings))
 
+    def play(self, script_name: str) -> None:
+        """Have the plugin replay an input script, bypassing key bindings."""
+        self._send(protocol.encode_play(script_name))
+
+    def focus(self) -> None:
+        """Bring this instance's window forward."""
+        self._send(protocol.encode_focus())
+
     def ping(self, payload: str = "ping") -> None:
         self._send(protocol.encode_ping(payload))
 

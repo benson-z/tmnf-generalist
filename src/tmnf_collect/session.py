@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import gamelog, launcher, staging
+from . import gamelog, launcher, staging, userdirs
 from .controller import Controller
 from .launcher import GameInstance
 from .paths import Layout, detect
@@ -34,6 +34,14 @@ STATE_VALIDATION = 262144  # TM::GameState::Unknown1, where validate_replay land
 
 class SessionError(RuntimeError):
     pass
+
+
+class NoInputsError(SessionError):
+    """The replay carries no inputs, so there is nothing to re-drive.
+
+    Plenty of replays are like this -- the game only stores the inputs for
+    runs it considers validatable -- and it is not a fault to recover from.
+    """
 
 
 def _is_moving(sample: Sample) -> bool:
@@ -59,6 +67,8 @@ class RunResult:
     restarts: int = 0  # arming attempts that produced a stationary car
     clean_start: bool = True  # False if the run did not begin at race time 0
     driving: bool = False  # the inputs actually reached the car
+    armed: bool = True  # the restart before the run was observed
+    overran: bool = False  # ran past the replay's time without finishing
 
 
 class Session:
@@ -72,6 +82,8 @@ class Session:
         height: int = 240,
         period_ms: int = 50,
         force_render: bool = False,
+        isolate_user_dir: bool = True,
+        focus_before_run: bool = True,
     ) -> None:
         self.layout = layout or detect()
         self.port = port
@@ -80,6 +92,8 @@ class Session:
         self.height = height
         self.period_ms = period_ms
         self.force_render = force_render
+        self.isolate_user_dir = isolate_user_dir
+        self.focus_before_run = focus_before_run
 
         self.controller: Controller | None = None
         self.instance: GameInstance | None = None
@@ -89,9 +103,18 @@ class Session:
 
     def start(self, *, timeout: float = 180.0) -> None:
         """Launch the game and wait for its plugin to connect."""
+        profile = None
+        if self.isolate_user_dir:
+            # Its own copy of the profile the game keys inputs off, so parallel
+            # instances cannot clobber each other's bindings.
+            profile = userdirs.setup(self.layout, self.instance_id)
+
         self.controller = Controller(self.port)
         self.instance = launcher.launch(
-            port=self.port, instance_id=self.instance_id, layout=self.layout
+            port=self.port,
+            instance_id=self.instance_id,
+            layout=self.layout,
+            profile=profile,
         )
         self.controller.accept(timeout=timeout)
 
@@ -250,15 +273,20 @@ class Session:
             "set autorewind_nofinish false",
             # This is what actually injects the loaded inputs.
             "set execute_commands true",
+            # Makes the console say when an input could not be injected,
+            # which is the only way a wedged instance announces itself.
+            "set log_bot true",
             "set skip_map_load_screens true",
             "set draw_game true",
-            "set countdown_speed 5",
+            # A sped-up countdown can skip the tick carrying the run's first
+            # input, which leaves the car parked for the whole run.
+            "set countdown_speed 1",
             f"set speed {speed}",
         ):
             self._command(command)
 
     def dump_inputs(
-        self, staged_replay: str, script_name: str, *, timeout: float = 60.0
+        self, staged_replay: str, script_name: str, *, timeout: float = 25.0
     ) -> Path:
         """Extract a replay's inputs into a loadable script.
 
@@ -275,9 +303,9 @@ class Session:
             if target.is_file() and target.stat().st_size > 0:
                 return target
             self._drain(0.25)
-        raise SessionError(
-            f"dump_inputs produced no script for {staged_replay}; "
-            "the replay may not have finished the race"
+        # The game says "The replay contained no inputs" and writes nothing.
+        raise NoInputsError(
+            f"{staged_replay} contains no inputs to replay"
         )
 
     def console_log(self) -> str:
@@ -295,27 +323,38 @@ class Session:
         max_samples: int = 20000,
         timeout: float = 600.0,
         arm_attempts: int = 3,
+        map_timeout: float = 120.0,
+        expected_ms: int | None = None,
         on_sample: Callable[[Sample], None] | None = None,
         on_reset: Callable[[], None] | None = None,
     ) -> RunResult:
         """Load a map, make TMInterface replay ``script_name``, record the run.
 
-        Loading a script does not by itself arm playback: the race has to
-        restart afterwards for the inputs to be injected. That restart is
-        sometimes swallowed, and the symptom is a car that just sits on the
-        start line, so this checks that the car is actually driving and asks
-        again if it is not, rather than recording a stationary run.
+        Loading a script does not arm playback by itself; the race has to
+        restart afterwards. The restart is checked by watching for the car to
+        actually move, because an instance that has lost its key bindings
+        restarts happily and then just sits on the start line.
         """
         if self.game_state != STATE_MENUS:
             # A finished race parks on the medal screen, and no map loads while
             # that is up.
             self.leave_map()
-        self.load_map(staged_challenge)
+        self.load_map(staged_challenge, intro_timeout=map_timeout)
         self._command(f"load {script_name}", settle=0.5)
 
         attempt = 0
         while True:
             attempt += 1
+            if self.focus_before_run:
+                # An instance that is not the foreground window has no input
+                # bindings for TMInterface to drive the car through, and the
+                # run silently plays out with the car parked on the start line
+                # ("no binding for Accelerate found"). Activating the window
+                # before arming is what makes parallel instances work; the
+                # bindings then survive losing focus again for the rest of the
+                # run.
+                self._ctrl.focus()
+                time.sleep(0.4)
             self._command("press delete")
             armed = self._wait_for_event(EV_RUN_RESET, timeout=15.0)
 
@@ -324,26 +363,22 @@ class Session:
                 run = self._record_attempt(
                     max_samples=max_samples,
                     timeout=timeout,
+                    expected_ms=expected_ms,
                     on_sample=on_sample,
+                    on_reset=on_reset,
                 )
             finally:
                 self._ctrl.configure(collect=False)
 
-            run = RunResult(
-                samples=run.samples,
-                finished=run.finished,
-                finish_time=run.finish_time,
-                sample_count=run.sample_count,
-                dropped=run.dropped,
-                restarts=attempt - 1,
-                clean_start=run.clean_start and armed,
-                driving=run.driving,
-            )
+            run.restarts += attempt - 1
+            run.armed = armed
             if run.driving or attempt >= arm_attempts:
                 return run
 
-            # The inputs never got injected; throw the stationary frames away
-            # and ask for the restart again.
+            # The inputs never reached the car. That is usually a game instance
+            # whose key bindings have gone missing, which no amount of
+            # restarting fixes, so the caller is expected to give up before
+            # long and relaunch.
             if on_reset is not None:
                 on_reset()
 
@@ -357,7 +392,9 @@ class Session:
         *,
         max_samples: int,
         timeout: float,
+        expected_ms: int | None,
         on_sample: Callable[[Sample], None] | None,
+        on_reset: Callable[[], None] | None = None,
     ) -> RunResult:
         """Record one attempt, bailing out early if the car never moves."""
         controller = self._ctrl
@@ -369,6 +406,19 @@ class Session:
         started = False
         clean_start = True
         driving = False
+        overran = False
+        restarts = 0
+        prev_time: int | None = None
+
+        # A run that desyncs never reaches the finish line and the race clock
+        # just keeps going. The replay says how long it should take, so give it
+        # a margin and then stop, rather than recording minutes of a crashed car.
+        race_limit = (
+            None
+            if expected_ms is None
+            else expected_ms + max(5000, expected_ms // 5)
+        )
+
         deadline = time.monotonic() + timeout
 
         while time.monotonic() < deadline:
@@ -386,17 +436,32 @@ class Session:
                 continue
 
             if isinstance(message, Sample):
+                if prev_time is not None and message.race_time <= prev_time:
+                    # The race went back to the start mid-recording. What was
+                    # written so far belongs to an abandoned attempt, and
+                    # keeping it would splice two runs into one file.
+                    restarts += 1
+                    count = 0
+                    samples.clear()
+                    last_sample = None
+                    started = False
+                    driving = False
+                    if on_reset is not None:
+                        on_reset()
+                prev_time = message.race_time
+
                 if not started:
                     started = True
                     clean_start = message.race_time == 0
 
                 if not driving and _is_moving(message):
                     driving = True
-                if (
-                    not driving
-                    and message.race_time >= self.ARMING_GRACE_MS
-                ):
-                    break  # never armed; caller retries
+                if not driving and message.race_time >= self.ARMING_GRACE_MS:
+                    break  # the inputs never reached the car; caller retries
+
+                if race_limit is not None and message.race_time > race_limit:
+                    overran = True
+                    break  # this run is not going to finish
 
                 count += 1
                 last_sample = message
@@ -408,8 +473,9 @@ class Session:
                     break
                 continue
 
+            # Nothing arrived before the poll timed out.
             if started and count:
-                break  # nothing more is coming
+                break
 
         return RunResult(
             samples=samples,
@@ -419,4 +485,6 @@ class Session:
             dropped=last_sample.dropped if last_sample else 0,
             clean_start=clean_start,
             driving=driving,
+            overran=overran,
+            restarts=restarts,
         )

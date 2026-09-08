@@ -83,6 +83,7 @@ def launch(
     instance_id: int = 0,
     layout: Layout | None = None,
     extra_args: str = "",
+    profile: str | None = None,
     timeout: float = 120.0,
 ) -> GameInstance:
     """Start one game instance and return it once its process exists.
@@ -91,6 +92,7 @@ def launch(
     the in-game plugin can dial back to the right controller socket.
     """
     layout = layout or detect()
+    profile = profile or layout.profile
     token = uuid.uuid4().hex[:12]
     game_args = (
         f"/tmnfml_token={token} /tmnfml_port={port} /tmnfml_id={instance_id}"
@@ -104,7 +106,7 @@ def launch(
             str(layout.tmloader_exe),
             "run",
             layout.game,
-            layout.profile,
+            profile,
             game_args,
         ],
         cwd=str(layout.tmloader_root),
@@ -131,7 +133,7 @@ def launch(
 
     raise TimeoutError(
         f"game process did not appear within {timeout:.0f}s "
-        f"(launched via {layout.tmloader_exe} run {layout.game} {layout.profile})"
+        f"(launched via {layout.tmloader_exe} run {layout.game} {profile})"
     )
 
 

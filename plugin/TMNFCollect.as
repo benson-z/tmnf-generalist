@@ -23,6 +23,7 @@ const uint8 MSG_PONG = 0x05;
 const uint8 CMD_COMMAND = 0x10;
 const uint8 CMD_CONFIG = 0x11;
 const uint8 CMD_PING = 0x12;
+const uint8 CMD_FOCUS = 0x14;
 
 // event kinds
 const uint8 EV_RUN_START = 1;
@@ -179,6 +180,12 @@ void SendHello()
         && g_sock.Write(uint(IO::GetCurrentProcessId()));
     if (!ok) { Disconnect(); return; }
     WriteString(g_token);
+
+    // Report the state the game is already in. OnGameStateChanged only fires
+    // on a transition, and the game often reaches the menu before the plugin
+    // has connected, so a controller waiting for that transition would
+    // otherwise wait for one that already happened.
+    SendEvent(EV_GAMESTATE, 0, int(GetCurrentGameState()));
 }
 
 // ----------------------------------------------------------------- inbound
@@ -193,6 +200,8 @@ void PollCommands()
 
         if (kind == CMD_COMMAND) {
             ExecuteCommand(payload);
+        } else if (kind == CMD_FOCUS) {
+            Graphics::FocusGameWindow();
         } else if (kind == CMD_CONFIG) {
             ApplyConfig(payload);
         } else if (kind == CMD_PING) {
@@ -225,6 +234,12 @@ void ApplyConfigEntry(const string&in entry)
     if (key == "collect") {
         g_collecting = (value == "1");
         g_lastSampleTime = -1000000;
+        // Per run, not per game session: the controller reads this back as
+        // "how many sample points did *this* run lose".
+        if (g_collecting) {
+            g_dropped = 0;
+            g_pending = false;
+        }
     } else if (key == "period") {
         g_periodMs = Math::Max(10, int(Text::ParseInt(value)));
     } else if (key == "width") {

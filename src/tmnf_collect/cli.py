@@ -7,7 +7,7 @@ import json
 import time
 from pathlib import Path
 
-from . import camera_check, collect as collect_mod, install, launcher, smoke
+from . import camera_check, collect as collect_mod, install, launcher, smoke, verify
 from .paths import detect
 
 
@@ -60,13 +60,32 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         resume=not args.no_resume,
         progress=lambda r: print(
             f"  [{r.instance}] {r.status:14} {r.output_name} "
-            f"samples={r.samples} {r.seconds}s {r.detail}",
+            f"samples={r.samples} {r.seconds}s "
+            f"attempts={r.attempts}"
+            + (" INSTANCE-RESTARTED" if r.restarted_instance else "")
+            + (f" arming_retries={r.preroll_restarts}" if r.preroll_restarts else "")
+            + (f" {r.detail}" if r.detail else ""),
             flush=True,
         ),
     )
     trimmed = {k: v for k, v in summary.items() if k != "results"}
     print(json.dumps(trimmed, indent=2))
     return 0 if not summary["by_status"].get("error") else 1
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    report = verify.check_dataset(Path(args.dataset), period_ms=args.period)
+    checks = report.pop("checks")
+    print(json.dumps(report, indent=2))
+    for check in checks:
+        mark = "PASS" if check.ok else "FAIL"
+        print(
+            f"  {mark} {check.name:28} {check.rows:5} rows "
+            f"{check.frames:5} frames  {check.duration_ms / 1000:7.2f}s"
+        )
+        for problem in check.problems:
+            print(f"        - {problem}")
+    return 0 if report["failed"] == 0 else 1
 
 
 def _cmd_camera(args: argparse.Namespace) -> int:
@@ -182,6 +201,13 @@ def main(argv: list[str] | None = None) -> int:
         help="save the in-game console log to gamelog.txt",
     )
     p_collect.set_defaults(func=_cmd_collect)
+
+    p_verify = sub.add_parser(
+        "verify", help="check a recorded dataset on disk is complete and in order"
+    )
+    p_verify.add_argument("dataset", help="a dataset directory produced by collect")
+    p_verify.add_argument("--period", type=int, default=50)
+    p_verify.set_defaults(func=_cmd_verify)
 
     args = parser.parse_args(argv)
     return args.func(args)

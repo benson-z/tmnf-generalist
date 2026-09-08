@@ -18,7 +18,11 @@ does not. So for each `.Replay.Gbx`:
 
 The replay's own finish time is the correctness check: a re-driven run that
 finishes at a different millisecond did not reproduce, and is marked
-`time_mismatch` rather than quietly kept.
+`time_mismatch` rather than quietly kept. A run that never finishes at all is
+marked `unfinished`. Not every replay re-drives: a long one can diverge and
+leave the car crashed somewhere, so recording stops once the race clock passes
+the replay's own time by a margin instead of waiting out the timeout. That is a
+property of the replay, so it is not retried.
 
 Nothing in the pipeline validates a replay in-game. `validate_replay` works,
 but it ends on a modal "this replay is valid" dialog, and while that dialog is
@@ -60,6 +64,7 @@ uv run tmnf-collect install-plugin  # copy the plugin into TMInterface
 uv run tmnf-collect launch          # start one instance, already logged in
 uv run tmnf-collect smoke           # launch, drive a fixed script, save frames
 uv run tmnf-collect camera-check    # measure what forced rendering does
+uv run tmnf-collect verify <dir>    # check a recorded dataset on disk
 uv run tmnf-collect kill            # stop every running instance
 ```
 
@@ -75,6 +80,17 @@ uv run tmnf-collect collect path/to/replays --out out/dataset --instances 4
 Re-running the same command skips replays that already recorded successfully,
 so an interrupted collection resumes where it stopped. Pass `--no-resume` to
 re-record everything.
+
+Check what landed on disk, independently of what the collector reported:
+
+```bash
+uv run tmnf-collect verify out/dataset
+```
+
+That re-reads every run and fails it on anything a training set would trip
+over: a finish time that does not match the replay, a first sample that is not
+at race time 0, a gap other than 50 ms, non-contiguous row indices, rows
+pointing at frames that are not there, or a frame drawn before its own tick.
 
 Each replay becomes `out/dataset/<replay name>/` holding `frames/NNNNNN.jpg`,
 `samples.jsonl` (one row per frame) and `meta.json` (what was expected, what
@@ -139,6 +155,14 @@ These all cost real debugging time and are handled in code:
   the one in the challenge header, so both are read from the Gbx header XML.
 * `Net::Socket::Connect` returns false in TMInterface 2.2.1 even when the
   connection is established, so the handshake write decides instead.
+* `OnGameStateChanged` only fires on a *transition*, and the plugin often
+  connects after the game has already reached the menu, so the plugin reports
+  its current state on connect too. Without that, a controller waiting for the
+  menu waits for an event that already happened.
+* An instance that is not the foreground window has no input bindings, so
+  nothing can drive the car. See below.
+* `SimulationManager::SetInputState` crashes the game when called from
+  `OnRunStep` during a normal race; it is for simulation contexts only.
 
 ## Status
 
@@ -152,11 +176,11 @@ These all cost real debugging time and are handled in code:
       through one instance. Verified: three stock campaign replays re-driven to
       their exact finish times (24540 / 16250 / 18750 ms), every gap 50 ms, no
       drops, frames and rows equal.
-- [x] **4 - Throughput.** Several instances in parallel on their own ports
-      and their own share of the queue, resume, and instance recycling when one
-      wedges. Verified: six replays through two instances, all six reproducing
-      their exact finish times, then a resume run that correctly skipped all
-      six.
+- [x] **4 - Throughput.** Several instances in parallel on their own ports,
+      user directories and share of the queue, resume, and instance recycling
+      when one wedges. Verified: six replays through three instances, all six
+      passing first try and reproducing their exact finish times, 1.8x faster
+      than one instance, plus a resume run that correctly skipped all six.
 
 ## How fast one instance can go
 
@@ -177,12 +201,48 @@ instances rather than from raising the speed of one. Every sample carries
 `render_race_time` and a running `dropped` count, so this is checkable in any
 dataset rather than having to be trusted.
 
-Loading a script does not by itself make TMInterface replay it; the race has to
-restart afterwards, and that restart is occasionally swallowed, leaving the car
-parked on the start line. Recording therefore checks that the car is actually
-moving and asks again if it is not, and a job that still will not start gets a
-freshly launched instance. This happens more often with several instances
-running at once, which is why the recovery exists rather than a longer sleep.
+Recording still checks that the car is actually moving, and reloads the map (or
+relaunches the instance) if it is not, so a stationary run can never be written
+out as if it were real.
+
+## Why parallel instances used to record stationary cars
+
+Running several instances at once used to leave some runs with the car parked
+on the start line for the whole race. The game's own console said why:
+
+```
+Failed to execute input: no binding for Accelerate found.
+Accelerate at 0.00s
+```
+
+TMInterface replays a script by simulating the game's *bound keys*, and an
+instance that is not the foreground window has no input bindings, so every
+injected input is discarded. The race restarts happily, the script is loaded,
+`execute_commands` is true -- and nothing reaches the car. Nothing in this tool
+writes bindings, which is exactly why it took a while to find: the state that
+goes missing is the game's, not ours.
+
+Two things it was *not*, both ruled out by experiment rather than argument:
+
+* Not shared user data. Giving every instance its own `/userdir` (its own
+  `Profiles`, `Config` and `Scores`, with `Tracks` shared through a junction)
+  did not reduce the binding errors at all.
+* Not the sped-up countdown skipping the first input. Setting
+  `countdown_speed` back to 1 made no difference either.
+
+The fix is for each instance to activate its own window
+(`Graphics::FocusGameWindow`) just before a run is armed. The bindings then
+survive the window losing focus again for the rest of the run, so instances can
+still overlap. Measured over the same six replays on three instances:
+
+| | first-try passes | retries | instance relaunches | binding errors | wall clock |
+|---|---|---|---|---|---|
+| before | 4 / 6 | 2 | 2 | 46 | 149 s |
+| after | 6 / 6 | 0 | 0 | 0 | 113 s |
+
+Recovering from a wedged instance cost most of the parallel speed-up, which is
+why fixing this made three instances 1.8x faster than one (113 s vs 209 s)
+rather than barely faster.
 
 ## What forced rendering does to the camera
 

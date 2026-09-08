@@ -19,7 +19,7 @@ from . import install, replays, staging
 from .dataset import RunWriter
 from .paths import Layout, detect
 from .replays import ChallengeIndex, ReplayError, ReplayInfo
-from .session import Session, SessionError
+from .session import NoInputsError, Session, SessionError
 
 
 @dataclass
@@ -39,12 +39,14 @@ class JobResult:
     output_name: str
     replay: str
     map_uid: str
-    status: str  # ok | not_driven | restarted | unfinished | time_mismatch | error
+    status: str  # ok | no_inputs | dropped_frames | not_driven |
+    #             restarted | unfinished | time_mismatch | error
     expected_time: int | None = None
     finish_time: int | None = None
     samples: int = 0
     dropped: int = 0
     preroll_restarts: int = 0
+    attempts: int = 1  # how many times the job had to be driven
     restarted_instance: bool = False
     seconds: float = 0.0
     instance: int = 0
@@ -144,7 +146,13 @@ def run_job(
     )
 
     try:
-        session.dump_inputs(job.staged_replay, job.script_name)
+        try:
+            session.dump_inputs(job.staged_replay, job.script_name)
+        except NoInputsError as exc:
+            result.status = "no_inputs"
+            result.detail = str(exc)
+            result.seconds = round(time.monotonic() - started, 2)
+            return result
 
         with RunWriter(
             out_root / job.output_name,
@@ -155,6 +163,7 @@ def run_job(
                 job.staged_challenge,
                 job.script_name,
                 timeout=timeout,
+                expected_ms=job.replay.race_time,
                 on_sample=writer.add,
                 on_reset=writer.reset,
             )
@@ -167,7 +176,8 @@ def run_job(
                 result.status = "not_driven"
                 result.detail = (
                     f"the inputs never reached the car after {run.restarts + 1} "
-                    "attempt(s); it stayed on the start line"
+                    f"attempt(s); it stayed on the start line "
+                    f"(restart observed: {run.armed})"
                 )
             elif not run.clean_start:
                 result.status = "restarted"
@@ -177,12 +187,27 @@ def run_job(
                 )
             elif not run.finished:
                 result.status = "unfinished"
-                result.detail = "the run never crossed the finish line"
+                result.detail = (
+                    "the re-driven inputs did not reproduce the replay: the run "
+                    f"passed {job.replay.race_time} ms without finishing"
+                    if run.overran
+                    else "the run never crossed the finish line"
+                )
             elif run.finish_time != job.replay.race_time:
                 result.status = "time_mismatch"
                 result.detail = (
                     f"re-driven run finished at {run.finish_time} ms but the "
                     f"replay says {job.replay.race_time} ms"
+                )
+            elif run.dropped:
+                # The game could not draw a frame for some sample points, so
+                # the sequence has holes in it even though the run itself was
+                # correct. Usually transient: too many instances rendering at
+                # once.
+                result.status = "dropped_frames"
+                result.detail = (
+                    f"{run.dropped} sample point(s) never got a frame, so the "
+                    "20 Hz sequence has gaps"
                 )
             else:
                 result.status = "ok"
@@ -201,6 +226,7 @@ def run_job(
                     "dropped_sample_points": run.dropped,
                     "arming_retries": run.restarts,
                     "driving": run.driving,
+                    "restart_observed": run.armed,
                     "clean_start": run.clean_start,
                     "period_ms": session.period_ms,
                     "frame_size": [session.width, session.height],
@@ -233,7 +259,20 @@ def already_done(out_root: Path, job: Job) -> bool:
     return meta.get("status") == "ok"
 
 
-BAD_STATUSES = ("restarted", "unfinished", "not_driven", "error")
+# Worth re-driving on the same instance. Desyncs are in here because they are
+# not reliably a property of the replay: a run that failed to reproduce once has
+# been seen to reproduce exactly on the next attempt.
+RETRY_STATUSES = (
+    "restarted",
+    "not_driven",
+    "error",
+    "unfinished",
+    "time_mismatch",
+    "dropped_frames",
+)
+# Worth a fresh game: the instance itself is in a bad way, and re-driving on it
+# will keep failing the same way.
+RELAUNCH_STATUSES = ("restarted", "not_driven", "error")
 
 
 def _worker(
@@ -280,10 +319,12 @@ def _worker(
     session = new_session()
     try:
         for job in shard:
+            attempts = 1
             result = run_job(
                 session, job, out_root, image_format=image_format, quality=quality
             )
-            if result.status in BAD_STATUSES and retries:
+            if result.status in RETRY_STATUSES and retries:
+                attempts += 1
                 result = run_job(
                     session,
                     job,
@@ -291,21 +332,24 @@ def _worker(
                     image_format=image_format,
                     quality=quality,
                 )
-            if result.status in BAD_STATUSES:
+            restarted_instance = False
+            if result.status in RELAUNCH_STATUSES:
                 if capture_log:
                     _save_log(session, out_root, instance_id, suffix="_wedged")
                 session.close()
                 session = new_session()
-                recovered = run_job(
+                restarted_instance = True
+                attempts += 1
+                result = run_job(
                     session,
                     job,
                     out_root,
                     image_format=image_format,
                     quality=quality,
                 )
-                recovered.restarted_instance = True
-                result = recovered
 
+            result.attempts = attempts
+            result.restarted_instance = restarted_instance
             result.instance = instance_id
             results.append(result)
             if progress is not None:
@@ -427,6 +471,14 @@ def collect(
         "skipped_already_done": resumed,
         "recorded": len(results),
         "ok": sum(1 for r in results if r.status == "ok"),
+        # An "ok" that needed several goes still means the bug fired, so these
+        # are reported separately rather than folded into the pass count.
+        "ok_first_try": sum(
+            1 for r in results if r.status == "ok" and r.attempts == 1
+        ),
+        "jobs_retried": sum(1 for r in results if r.attempts > 1),
+        "instance_restarts": sum(1 for r in results if r.restarted_instance),
+        "arming_retries_total": sum(r.preroll_restarts for r in results),
         "by_status": {
             status: sum(1 for r in results if r.status == status)
             for status in sorted({r.status for r in results})
