@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import install, replays, staging
+from . import install, replays, staging, tmx
 from .dataset import RunWriter
 from .paths import Layout, detect
 from .replays import ChallengeIndex, ReplayError, ReplayInfo
@@ -74,6 +74,7 @@ def plan(
     *,
     layout: Layout | None = None,
     index: ChallengeIndex | None = None,
+    fetch_maps: bool = False,
 ) -> Plan:
     """Resolve maps and stage every file.
 
@@ -101,13 +102,28 @@ def plan(
             continue
 
         challenge = index.find(info.map_uid)
+        if challenge is None and fetch_maps:
+            # A replay names its map only by UID, and one downloaded from TMX
+            # rarely arrives with the map beside it.
+            try:
+                challenge = tmx.fetch_map(
+                    info.map_uid, staging.challenges_dir(layout)
+                )
+            except tmx.TmxError as exc:
+                result.skipped.append(
+                    {
+                        "replay": str(path),
+                        "reason": f"could not fetch map {info.map_uid}: {exc}",
+                    }
+                )
+                continue
         if challenge is None:
-            result.skipped.append(
-                {
-                    "replay": str(path),
-                    "reason": f"no local map with UID {info.map_uid}",
-                }
-            )
+            reason = f"no local map with UID {info.map_uid}"
+            if not fetch_maps:
+                reason += " (try --fetch-maps)"
+            else:
+                reason += " and TMX does not have it either"
+            result.skipped.append({"replay": str(path), "reason": reason})
             continue
 
         name = _safe_name(path)
@@ -363,6 +379,7 @@ def collect(
     hide_ui: bool = True,
     unfocused_fps_limit: bool = False,
     hide_console: bool = True,
+    fetch_maps: bool = False,
     limit: int | None = None,
     image_format: str = "jpeg",
     quality: int = 90,
@@ -387,7 +404,7 @@ def collect(
     paths = replays.discover_replays(replay_root)
     if limit is not None:
         paths = paths[:limit]
-    prepared = plan(paths, layout=layout)
+    prepared = plan(paths, layout=layout, fetch_maps=fetch_maps)
 
     jobs = prepared.jobs
     resumed = 0

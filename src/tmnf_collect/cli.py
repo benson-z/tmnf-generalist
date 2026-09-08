@@ -63,6 +63,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         hide_ui=not args.show_ui,
         unfocused_fps_limit=args.fps_limit,
         hide_console=not args.show_console,
+        fetch_maps=args.fetch_maps,
         limit=args.limit,
         image_format=args.format,
         quality=args.quality,
@@ -225,6 +226,11 @@ def main(argv: list[str] | None = None) -> int:
         "--show-console",
         action="store_true",
         help="leave the TMInterface console on screen during collection",
+    )
+    p_collect.add_argument(
+        "--fetch-maps",
+        action="store_true",
+        help="download missing maps from tmnf.exchange by UID",
     )
     p_collect.add_argument("--force-render", action="store_true")
     p_collect.add_argument(

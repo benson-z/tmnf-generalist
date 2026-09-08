@@ -97,6 +97,19 @@ Re-running the same command skips replays that already recorded successfully,
 so an interrupted collection resumes where it stopped. Pass `--no-resume` to
 re-record everything.
 
+A replay names its map only by UID, and one downloaded from TMX almost never
+arrives with the map beside it. `--fetch-maps` looks any missing UID up on
+tmnf.exchange and downloads the `.Challenge.Gbx` before launching:
+
+```bash
+uv run tmnf-collect collect path/to/replays --out out/dataset --fetch-maps
+```
+
+The lookup is by UID, so it is exact rather than a guess at the map's title,
+and the downloaded file is rejected unless its own UID matches. It is opt-in
+because it reaches a third-party site and writes into the game's Tracks
+folder. Without it, a replay whose map is missing is skipped and says so.
+
 Check what landed on disk, independently of what the collector reported:
 
 ```bash
@@ -221,7 +234,9 @@ These all cost real debugging time and are handled in code:
       desync and 1 as carrying no inputs. `verify` passes all 10 on disk --
       8840 rows, 8840 frames, 8744 of them drawn on their own tick, worst frame
       lag 10 ms. A further four long replays (116 s to 177 s) all reproduced
-      exactly: 11358 more rows, 11358 frames, 4/4 passing verify.
+      exactly: 11358 more rows, 11358 frames, 4/4 passing verify. A TMX replay
+      whose map was not on the machine was recorded end to end via
+      `--fetch-maps`, reproducing its 43950 ms finish exactly.
 
 ## How fast one instance can go
 
