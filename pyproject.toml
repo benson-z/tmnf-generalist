@@ -2,9 +2,10 @@
 name = "tmnf-collect"
 version = "0.1.0"
 description = "Scriptable TrackMania Nations Forever data collection for ML training"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"  # pygbx needs python-lzo, newest wheels are cp311
 dependencies = [
     "numpy>=1.26",
+    "pygbx>=0.3",
     "pillow>=10.0",
     "pyyaml>=6.0",
 ]

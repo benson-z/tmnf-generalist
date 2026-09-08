@@ -10,13 +10,16 @@ from pathlib import Path
 from . import (
     camera_check,
     collect as collect_mod,
+    inputs as inputs_mod,
     install,
     launcher,
     smoke,
+    tmx,
     verify,
     video,
 )
 from .paths import detect
+from . import staging
 
 
 def _cmd_paths(args: argparse.Namespace) -> int:
@@ -82,6 +85,78 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     trimmed = {k: v for k, v in summary.items() if k != "results"}
     print(json.dumps(trimmed, indent=2))
     return 0 if not summary["by_status"].get("error") else 1
+
+
+def _cmd_filter(args: argparse.Namespace) -> int:
+    layout = detect(game=args.game, profile=args.profile)
+    result = inputs_mod.filter_replays(
+        Path(args.replays),
+        want=args.inputs,
+        max_seconds=args.max_seconds,
+        port=args.port,
+        layout=layout,
+        dry_run=args.dry_run,
+    )
+    print(
+        json.dumps(
+            {
+                "want": args.inputs,
+                "max_seconds": args.max_seconds,
+                "counts": result.counts,
+                "kept": len(result.kept),
+                "moved": len(result.moved),
+                "read_offline": result.read_offline,
+                "seconds": result.seconds,
+                "dry_run": args.dry_run,
+            },
+            indent=2,
+        )
+    )
+    for entry in result.moved[:20]:
+        print(f"  {entry['kind']:11} {Path(entry['replay']).name}")
+    return 0 if result.kept else 1
+
+
+def _cmd_harvest(args: argparse.Namespace) -> int:
+    layout = detect(game=args.game, profile=args.profile)
+    replays_dir = Path(args.out)
+    result = tmx.harvest(
+        maps_into=staging.challenges_dir(layout),
+        replays_into=replays_dir,
+        limit=args.limit,
+        min_author_time=int(args.min_seconds * 1000) if args.min_seconds else None,
+        max_author_time=int(args.max_seconds * 1000) if args.max_seconds else None,
+        min_awards=args.min_awards,
+        prefer=args.prefer,
+        dry_run=args.dry_run,
+    )
+
+    for item in result.picked:
+        kind = "author run" if item.is_author_run else item.replay.user
+        print(
+            f"  {item.track.awards:5} awards  "
+            f"run {item.replay.time_ms / 1000:6.2f}s  "
+            f"(author {item.track.author_time / 1000:6.2f}s)  "
+            f"{kind[:18]:18} {item.track.name[:40]}",
+            flush=True,
+        )
+    print(
+        json.dumps(
+            {
+                "tracks_considered": result.tracks_considered,
+                "picked": len(result.picked),
+                "author_runs": sum(1 for i in result.picked if i.is_author_run),
+                "skipped": len(result.skipped),
+                "dry_run": args.dry_run,
+                "replays_dir": str(replays_dir),
+                "maps_dir": str(staging.challenges_dir(layout)),
+            },
+            indent=2,
+        )
+    )
+    for entry in result.skipped[:10]:
+        print(f"  skipped {entry.get('track')}: {entry['reason']}")
+    return 0 if result.picked else 1
 
 
 def _cmd_video(args: argparse.Namespace) -> int:
@@ -262,6 +337,64 @@ def main(argv: list[str] | None = None) -> int:
     p_video.add_argument("--scale", type=int, default=3)
     p_video.add_argument("--limit", type=int, default=None)
     p_video.set_defaults(func=_cmd_video)
+
+    p_harvest = sub.add_parser(
+        "harvest",
+        help="pick maps on TMX and download a demonstration replay for each",
+    )
+    p_harvest.add_argument("--out", default="testdata/harvest")
+    p_harvest.add_argument("--limit", type=int, default=25)
+    p_harvest.add_argument(
+        "--min-awards",
+        type=int,
+        default=5,
+        help="award count is the best available quality signal",
+    )
+    p_harvest.add_argument("--min-seconds", type=float, default=25.0)
+    p_harvest.add_argument(
+        "--max-seconds",
+        type=float,
+        default=75.0,
+        help="long maps cost proportionally more to record and teach less",
+    )
+    p_harvest.add_argument(
+        "--prefer",
+        default="median",
+        choices=["median", "best", "author"],
+        help=(
+            "which run to learn from: median of the leaderboard (default), the "
+            "fastest, or the map author's validation lap (often far too slow)"
+        ),
+    )
+    p_harvest.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show what would be downloaded without downloading it",
+    )
+    p_harvest.set_defaults(func=_cmd_harvest)
+
+    p_filter = sub.add_parser(
+        "filter",
+        help="sort replays by input device before collecting, in one pass",
+    )
+    p_filter.add_argument("replays", help="a folder of replays to sort in place")
+    p_filter.add_argument(
+        "--inputs",
+        default=inputs_mod.KEYBOARD,
+        choices=[inputs_mod.KEYBOARD, inputs_mod.PAD],
+        help="which device to keep; everything else is moved aside",
+    )
+    p_filter.add_argument(
+        "--max-seconds",
+        type=float,
+        default=180.0,
+        help="drop runs longer than this; cost is linear in race time",
+    )
+    p_filter.add_argument("--port", type=int, default=8477)
+    p_filter.add_argument(
+        "--dry-run", action="store_true", help="report without moving anything"
+    )
+    p_filter.set_defaults(func=_cmd_filter)
 
     args = parser.parse_args(argv)
     return args.func(args)

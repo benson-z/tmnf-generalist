@@ -1,29 +1,49 @@
-"""Fetching missing maps from TrackMania Exchange.
+"""Finding and fetching maps and replays from TrackMania Exchange.
 
-A replay names its map only by UID, and a replay downloaded from TMX is
-usually accompanied by nothing at all -- so for any corpus that did not come
-off this machine, most maps will be missing. TMX can be searched by that same
-UID, which makes the lookup exact rather than a guess at the map's name.
+Two jobs live here.
 
-This is opt-in (``--fetch-maps``): it reaches out to a third-party site and
-writes files into the game's Tracks folder.
+*Filling a gap*: a replay names its map only by UID, and a replay downloaded
+from TMX rarely arrives with the map beside it, so `fetch_map` resolves that UID.
+
+*Building a corpus*: `harvest` goes the other way. It picks maps by quality, asks
+TMX for each map's replay leaderboard, and downloads a demonstration for each.
+Selecting maps first means the map and its replay always match, which removes the
+pairing problem entirely.
+
+Everything here is opt-in: it reaches a third-party site and writes files into the
+game's Tracks folder.
 """
 
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from .replays import read_challenge
+from .replays import read_challenge, read_replay
 
-API = "https://tmnf.exchange/api/tracks"
-DOWNLOAD = "https://tmnf.exchange/trackgbx/{track_id}"
+BASE = "https://tmnf.exchange"
+TRACKS_API = f"{BASE}/api/tracks"
+REPLAYS_API = f"{BASE}/api/replays"
+TRACK_GBX = f"{BASE}/trackgbx/{{track_id}}"
+REPLAY_GBX = f"{BASE}/recordgbx/{{replay_id}}"
+
 USER_AGENT = "tmnf-collect/0.1 (dataset collection tool)"
 TIMEOUT = 30.0
+PAGE = 100  # the API's maximum page size
+COURTESY_DELAY = 0.2  # seconds between requests
+
+# Ordering ids the API understands. Awards descending is the useful one: it puts
+# well-built, well-received maps first, which is a far better quality signal than
+# anything derivable from a map's own metadata.
+ORDER_AWARDS_DESC = 6
+
+TRACK_FIELDS = "TrackId,TrackName,Authors,AuthorTime,Awards,Tags,Difficulty"
+REPLAY_FIELDS = "ReplayId,ReplayTime,User.Name"
 
 
 class TmxError(RuntimeError):
@@ -34,6 +54,38 @@ class TmxError(RuntimeError):
 class TmxTrack:
     track_id: int
     name: str
+    author_time: int = 0
+    awards: int = 0
+    difficulty: int = 0
+    tags: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class TmxReplay:
+    replay_id: int
+    time_ms: int
+    user: str
+
+
+@dataclass
+class Harvested:
+    """One map plus the replay chosen to demonstrate it."""
+
+    track: TmxTrack
+    replay: TmxReplay
+    map_path: Path
+    replay_path: Path
+    is_author_run: bool
+
+
+@dataclass
+class HarvestResult:
+    picked: list[Harvested] = field(default_factory=list)
+    skipped: list[dict] = field(default_factory=list)
+    tracks_considered: int = 0
+
+
+# ----------------------------------------------------------------- transport
 
 
 def _get(url: str) -> bytes:
@@ -43,56 +95,165 @@ def _get(url: str) -> bytes:
             return response.read()
     except (urllib.error.URLError, TimeoutError) as exc:
         raise TmxError(f"{url}: {exc}") from exc
+    finally:
+        time.sleep(COURTESY_DELAY)
+
+
+def _get_json(url: str) -> dict:
+    try:
+        return json.loads(_get(url))
+    except ValueError as exc:
+        raise TmxError(f"unreadable response from {url}: {exc}") from exc
+
+
+# -------------------------------------------------------------------- search
+
+
+def _track_from(row: dict) -> TmxTrack:
+    return TmxTrack(
+        track_id=int(row["TrackId"]),
+        name=row.get("TrackName", ""),
+        author_time=int(row.get("AuthorTime") or 0),
+        awards=int(row.get("Awards") or 0),
+        difficulty=int(row.get("Difficulty") or 0),
+        tags=tuple(row.get("Tags") or ()),
+    )
+
+
+def search_tracks(
+    *,
+    limit: int,
+    min_author_time: int | None = None,
+    max_author_time: int | None = None,
+    min_awards: int = 0,
+    exclude_tags: tuple[int, ...] = (),
+) -> list[TmxTrack]:
+    """Maps ordered by award count, best first.
+
+    ``min_awards`` is applied here rather than by the API, which ignores an
+    awards filter; because the ordering is awards-descending, dropping below the
+    threshold means every later page is below it too, so the walk can stop.
+    """
+    found: list[TmxTrack] = []
+    after: int | None = None
+
+    while len(found) < limit:
+        params = {
+            "fields": TRACK_FIELDS,
+            "count": PAGE,
+            "order1": ORDER_AWARDS_DESC,
+        }
+        if min_author_time is not None:
+            params["authorTimeMin"] = min_author_time
+        if max_author_time is not None:
+            params["authorTimeMax"] = max_author_time
+        if after is not None:
+            params["after"] = after
+
+        payload = _get_json(f"{TRACKS_API}?{urllib.parse.urlencode(params)}")
+        rows = payload.get("Results") or []
+        if not rows:
+            break
+
+        for row in rows:
+            track = _track_from(row)
+            if track.awards < min_awards:
+                return found  # ordering guarantees nothing better follows
+            if exclude_tags and set(track.tags) & set(exclude_tags):
+                continue
+            found.append(track)
+            if len(found) >= limit:
+                break
+
+        after = int(rows[-1]["TrackId"])
+        if not payload.get("More"):
+            break
+
+    return found
 
 
 def find_by_uid(map_uid: str) -> TmxTrack | None:
     """Look a map up by its UID. Returns None if TMX does not have it."""
+    query = urllib.parse.urlencode({"fields": TRACK_FIELDS, "uid": map_uid})
+    results = _get_json(f"{TRACKS_API}?{query}").get("Results") or []
+    return _track_from(results[0]) if results else None
+
+
+def track_replays(track_id: int, *, limit: int = PAGE) -> list[TmxReplay]:
+    """A map's replay leaderboard, fastest first."""
     query = urllib.parse.urlencode(
-        {"fields": "TrackId,TrackName", "uid": map_uid}
+        {"trackId": track_id, "fields": REPLAY_FIELDS, "count": limit}
     )
-    try:
-        payload = json.loads(_get(f"{API}?{query}"))
-    except ValueError as exc:
-        raise TmxError(f"unreadable response for {map_uid}: {exc}") from exc
+    rows = _get_json(f"{REPLAYS_API}?{query}").get("Results") or []
+    replays = [
+        TmxReplay(
+            replay_id=int(row["ReplayId"]),
+            time_ms=int(row.get("ReplayTime") or 0),
+            user=(row.get("User") or {}).get("Name", ""),
+        )
+        for row in rows
+    ]
+    return sorted(replays, key=lambda r: r.time_ms)
 
-    results = payload.get("Results") or []
-    if not results:
-        return None
-    first = results[0]
-    return TmxTrack(track_id=int(first["TrackId"]), name=first.get("TrackName", ""))
+
+# ------------------------------------------------------------------ download
 
 
-def download(track: TmxTrack, into: Path, map_uid: str) -> Path:
-    """Download a map and check it is really the one we asked for.
+def download_track(
+    track: TmxTrack, into: Path, *, expect_uid: str | None = None
+) -> tuple[Path, str]:
+    """Download a map. Returns its path and its own UID.
 
-    The file is named after its TMX id rather than its title: map names carry
+    Named after the TMX id rather than the map's title: real map names carry
     spaces and formatting codes, and the game's console commands take these
     paths as bare words.
     """
     into.mkdir(parents=True, exist_ok=True)
     target = into / f"tmx-{track.track_id}.Challenge.Gbx"
-    if target.is_file():
-        parsed = read_challenge(target)
-        if parsed and parsed[0] == map_uid:
-            return target
 
-    data = _get(DOWNLOAD.format(track_id=track.track_id))
-    if not data.startswith(b"GBX"):
-        raise TmxError(
-            f"TMX returned {len(data)} bytes for track {track.track_id} that "
-            "are not a Gbx file"
-        )
+    if not target.is_file():
+        data = _get(TRACK_GBX.format(track_id=track.track_id))
+        if not data.startswith(b"GBX"):
+            raise TmxError(
+                f"track {track.track_id}: {len(data)} bytes that are not a Gbx"
+            )
+        partial = target.with_suffix(".part")
+        partial.write_bytes(data)
+        partial.replace(target)
 
-    partial = target.with_suffix(".part")
-    partial.write_bytes(data)
-    parsed = read_challenge(partial)
-    if not parsed or parsed[0] != map_uid:
-        got = parsed[0] if parsed else "unreadable"
-        partial.unlink(missing_ok=True)
+    parsed = read_challenge(target)
+    if not parsed:
+        target.unlink(missing_ok=True)
+        raise TmxError(f"track {track.track_id} did not parse as a challenge")
+    if expect_uid is not None and parsed[0] != expect_uid:
+        target.unlink(missing_ok=True)
         raise TmxError(
-            f"track {track.track_id} has UID {got}, expected {map_uid}"
+            f"track {track.track_id} has UID {parsed[0]}, expected {expect_uid}"
         )
-    partial.replace(target)
+    return target, parsed[0]
+
+
+def download_replay(replay: TmxReplay, into: Path, *, expect_uid: str) -> Path:
+    """Download a replay and check it belongs to the map we think it does."""
+    into.mkdir(parents=True, exist_ok=True)
+    target = into / f"tmx-{replay.replay_id}.Replay.Gbx"
+
+    if not target.is_file():
+        data = _get(REPLAY_GBX.format(replay_id=replay.replay_id))
+        if not data.startswith(b"GBX"):
+            raise TmxError(
+                f"replay {replay.replay_id}: {len(data)} bytes that are not a Gbx"
+            )
+        partial = target.with_suffix(".part")
+        partial.write_bytes(data)
+        partial.replace(target)
+
+    info = read_replay(target)
+    if info.map_uid != expect_uid:
+        target.unlink(missing_ok=True)
+        raise TmxError(
+            f"replay {replay.replay_id} is for map {info.map_uid}, not {expect_uid}"
+        )
     return target
 
 
@@ -101,4 +262,120 @@ def fetch_map(map_uid: str, into: Path) -> Path | None:
     track = find_by_uid(map_uid)
     if track is None:
         return None
-    return download(track, into, map_uid)
+    return download_track(track, into, expect_uid=map_uid)[0]
+
+
+# ------------------------------------------------------------------- harvest
+
+
+# A run far slower than the map's best is not a demonstration of driving it.
+# Author validation runs in particular can be a leisurely lap: one sampled map
+# has an author time of 199 s against a 89 s record, another 190 s against 15 s.
+SLOW_FACTOR = 1.5
+
+
+def choose_replay(
+    replays: list[TmxReplay], track: TmxTrack, *, prefer: str
+) -> TmxReplay | None:
+    """Pick which run on a map to learn from.
+
+    ``median`` is the default: a competent mid-leaderboard run. Records are
+    edge-of-control and nearly identical to each other, which gives poor state
+    coverage for a behaviour-cloning prior, while the map author's own
+    validation lap is often far too slow to be worth imitating.
+    """
+    if not replays:
+        return None
+
+    fastest = replays[0].time_ms
+    usable = [r for r in replays if r.time_ms <= fastest * SLOW_FACTOR] or [
+        replays[0]
+    ]
+
+    if prefer == "best":
+        return usable[0]
+    if prefer == "author":
+        author = [r for r in replays if r.time_ms == track.author_time]
+        if author:
+            return author[0]
+        return usable[-1]  # closest in spirit: the slowest still-credible run
+    return usable[len(usable) // 2]
+
+
+def harvest(
+    *,
+    maps_into: Path,
+    replays_into: Path,
+    limit: int,
+    min_author_time: int | None = None,
+    max_author_time: int | None = None,
+    min_awards: int = 0,
+    exclude_tags: tuple[int, ...] = (),
+    prefer: str = "median",
+    dry_run: bool = False,
+) -> HarvestResult:
+    """Select maps on TMX and download a demonstration for each."""
+    result = HarvestResult()
+
+    # Over-fetch: some maps have no replays and drop out.
+    tracks = search_tracks(
+        limit=limit * 3,
+        min_author_time=min_author_time,
+        max_author_time=max_author_time,
+        min_awards=min_awards,
+        exclude_tags=exclude_tags,
+    )
+    result.tracks_considered = len(tracks)
+
+    for track in tracks:
+        if len(result.picked) >= limit:
+            break
+        try:
+            replays = track_replays(track.track_id)
+        except TmxError as exc:
+            result.skipped.append({"track": track.track_id, "reason": str(exc)})
+            continue
+
+        replay = choose_replay(replays, track, prefer=prefer)
+        if replay is None:
+            result.skipped.append(
+                {
+                    "track": track.track_id,
+                    "name": track.name,
+                    "reason": "no replays on its leaderboard",
+                }
+            )
+            continue
+
+        if dry_run:
+            result.picked.append(
+                Harvested(
+                    track=track,
+                    replay=replay,
+                    map_path=Path(),
+                    replay_path=Path(),
+                    is_author_run=replay.time_ms == track.author_time,
+                )
+            )
+            continue
+
+        try:
+            map_path, map_uid = download_track(track, maps_into)
+            replay_path = download_replay(
+                replay, replays_into, expect_uid=map_uid
+            )
+        except TmxError as exc:
+            result.skipped.append({"track": track.track_id, "reason": str(exc)})
+            continue
+
+        result.picked.append(
+            Harvested(
+                track=track,
+                replay=replay,
+                map_path=map_path,
+                replay_path=replay_path,
+                is_author_run=replay.time_ms == track.author_time,
+            )
+        )
+
+    return result

@@ -68,7 +68,8 @@ game, feeds replays to it one after another, and writes the dataset.
 
 * TrackMania Nations Forever and TrackMania ModLoader (TMLoader), with a
   profile that has TMInterface 2.2+ enabled.
-* Python 3.11 or newer, and [uv](https://docs.astral.sh/uv/).
+* Python 3.11 — pinned, because `pygbx` needs `python-lzo` and its newest
+  wheels are cp311. Plus [uv](https://docs.astral.sh/uv/).
 
 ## Usage
 
@@ -81,6 +82,8 @@ uv run tmnf-collect smoke           # launch, drive a fixed script, save frames
 uv run tmnf-collect camera-check    # measure what forced rendering does
 uv run tmnf-collect verify <dir>    # check a recorded dataset on disk
 uv run tmnf-collect video <run>     # replay one run as annotated video
+uv run tmnf-collect harvest         # pick maps on TMX and fetch demos
+uv run tmnf-collect filter <dir>    # sort replays by input device
 uv run tmnf-collect kill            # stop every running instance
 ```
 
@@ -96,6 +99,76 @@ uv run tmnf-collect collect path/to/replays --out out/dataset --instances 4
 Re-running the same command skips replays that already recorded successfully,
 so an interrupted collection resumes where it stopped. Pass `--no-resume` to
 re-record everything.
+
+### Building a corpus from TMX
+
+`harvest` picks maps and fetches a demonstration for each, so the map and its
+replay always match and there is no UID search:
+
+```bash
+uv run tmnf-collect harvest --limit 200 --out testdata/corpus --dry-run
+uv run tmnf-collect harvest --limit 200 --out testdata/corpus
+uv run tmnf-collect collect testdata/corpus --out out/corpus --instances 3
+```
+
+Maps are ordered by **award count**, which is the only real quality signal TMX
+exposes and filters out broken and troll maps cheaply. `--min-seconds` /
+`--max-seconds` bound the author time, because a long map costs proportionally
+more to record and is mostly straight-line holding.
+
+`--prefer` chooses which run on a map to learn from:
+
+* `median` (default) — a competent mid-leaderboard run. Records are
+  edge-of-control and near-identical to each other, which is poor state coverage
+  for a cloning prior.
+* `best` — the fastest run.
+* `author` — the map maker's validation lap. Often *far* too slow to imitate:
+  sampled maps had author times of 199 s against an 89 s record, and 190 s
+  against 15 s. Runs more than 1.5x the map's best are dropped whatever the
+  setting.
+
+Downloads are verified, not trusted: a fetched map must report the UID that was
+asked for, and a fetched replay must name the map it was fetched for.
+
+### Sorting replays by input device
+
+Keyboard and pad are different control regimes rather than different styles: in
+TMNF a key press is instant full lock, while a pad emits a continuous value.
+Mixed into one training set, the same corner carries contradictory labels.
+
+`filter` sorts a folder in one pass, before any recording:
+
+```bash
+uv run tmnf-collect filter testdata/corpus --inputs keyboard --max-seconds 180
+uv run tmnf-collect collect testdata/corpus --out out/corpus --instances 3
+```
+
+It reads each replay's ghost with `pygbx` and looks at the control entries: a
+`Steer` event means an analog device, `SteerLeft`/`SteerRight` means a keyboard,
+and no entries at all means the replay stores no inputs. No game is involved and
+it runs at roughly 10 ms per replay -- ten replays sort in 0.1 s.
+
+Any replay pygbx cannot read falls back to asking a running game to
+`dump_inputs` it, and the script is classified the same way (analog `steer`
+lines versus `press left`/`press right`). Both routes were checked against the
+same ten replays and agreed on every one; the fallback costs a game launch plus
+about a second per replay.
+
+`--max-seconds` drops long runs in the same pass, read from the replay header
+before any parsing. Recording cost is linear in race time while the learning
+signal is roughly per corner, so one three-minute run buys much less than three
+one-minute runs.
+
+Rejects are **moved to a sibling folder** (`testdata/corpus.rejected/pad/…`),
+not deleted and not tucked into a subfolder -- collection walks subdirectories,
+so a subfolder would still be picked up. A `filter.json` report is left behind.
+
+**Expect to lose a lot.** Of eight replays harvested from the top of TMX's
+award rankings, five were pad and only four keyboard. Fast players on
+well-known maps often use a pad, so over-harvest by roughly 2x if the corpus is
+to be keyboard-only.
+
+### Filling in a missing map
 
 A replay names its map only by UID, and one downloaded from TMX almost never
 arrives with the map beside it. `--fetch-maps` looks any missing UID up on
