@@ -82,6 +82,7 @@ class Session:
         height: int = 240,
         period_ms: int = 50,
         force_render: bool = False,
+        hide_ui: bool = True,
         isolate_user_dir: bool = True,
         focus_before_run: bool = True,
     ) -> None:
@@ -92,6 +93,7 @@ class Session:
         self.height = height
         self.period_ms = period_ms
         self.force_render = force_render
+        self.hide_ui = hide_ui
         self.isolate_user_dir = isolate_user_dir
         self.focus_before_run = focus_before_run
 
@@ -133,6 +135,7 @@ class Session:
             width=self.width,
             height=self.height,
             force_render=self.force_render,
+            hide_ui=self.hide_ui,
         )
 
     def close(self) -> None:

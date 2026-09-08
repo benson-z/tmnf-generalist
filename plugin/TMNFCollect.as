@@ -46,6 +46,9 @@ int g_periodMs = 50; // 20 Hz in race time
 int g_capW = 320;
 int g_capH = 240;
 bool g_forceRender = false;
+// Training frames want the bare game view, without the speedometer,
+// clock and checkpoint widgets drawn over it.
+bool g_hideUi = true;
 
 uint g_seq = 0;
 uint g_dropped = 0;      // ticks whose frame never got rendered
@@ -234,6 +237,7 @@ void ApplyConfigEntry(const string&in entry)
     if (key == "collect") {
         g_collecting = (value == "1");
         g_lastSampleTime = -1000000;
+        ApplyRaceInterface();
         // Per run, not per game session: the controller reads this back as
         // "how many sample points did *this* run lose".
         if (g_collecting) {
@@ -248,7 +252,17 @@ void ApplyConfigEntry(const string&in entry)
         g_capH = int(Text::ParseInt(value));
     } else if (key == "force_render") {
         g_forceRender = (value == "1");
+    } else if (key == "hide_ui") {
+        g_hideUi = (value == "1");
+        ApplyRaceInterface();
     }
+}
+
+// The race interface comes back on its own across map loads, so this is
+// re-applied whenever collection is armed and again once a run starts.
+void ApplyRaceInterface()
+{
+    ToggleRaceInterface(!(g_hideUi && g_collecting));
 }
 
 // ---------------------------------------------------------------- outbound
@@ -362,6 +376,7 @@ void OnRunStep(SimulationManager@ sim)
     }
     if (g_prevRaceTime < 0 && raceTime >= 0) {
         SendEvent(EV_RUN_START, raceTime, 0);
+        ApplyRaceInterface();
     }
     g_prevRaceTime = raceTime;
 

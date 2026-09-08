@@ -45,6 +45,11 @@ Sampling lives in an AngelScript plugin loaded by TMInterface:
 * Frames (BGRA), input state and telemetry go out over a `Net::Socket` to the
   Python controller, which writes the dataset. There is no file-write API in
   the plugin sandbox, so the socket is the only way out.
+* The in-game speedometer, clock and checkpoint widgets are switched off for
+  the duration of a run (`ToggleRaceInterface`), so frames are the bare game
+  view. The race interface comes back by itself across map loads, so it is
+  re-applied when collection is armed and again when the run starts. Pass
+  `--show-ui` to keep it.
 
 The Python side owns the queue: it resolves and stages files, launches the
 game, feeds replays to it one after another, and writes the dataset.
@@ -65,6 +70,7 @@ uv run tmnf-collect launch          # start one instance, already logged in
 uv run tmnf-collect smoke           # launch, drive a fixed script, save frames
 uv run tmnf-collect camera-check    # measure what forced rendering does
 uv run tmnf-collect verify <dir>    # check a recorded dataset on disk
+uv run tmnf-collect video <run>     # replay one run as annotated video
 uv run tmnf-collect kill            # stop every running instance
 ```
 
@@ -91,6 +97,18 @@ That re-reads every run and fails it on anything a training set would trip
 over: a finish time that does not match the replay, a first sample that is not
 at race time 0, a gap other than 50 ms, non-contiguous row indices, rows
 pointing at frames that are not there, or a frame drawn before its own tick.
+
+To check the frames and the labels are actually in step, watch one run back
+with its telemetry drawn on:
+
+```bash
+uv run tmnf-collect video out/dataset/A07-Race.Replay --out out/A07.mp4
+```
+
+Every frame gets its race time, speed, resolved steer/gas/brake and the four
+keys as they were held on that tick. Numbers can agree with each other and
+still be shifted against the pictures; this is the check that catches that.
+Needs `ffmpeg` on PATH.
 
 Each replay becomes `out/dataset/<replay name>/` holding `frames/NNNNNN.jpg`,
 `samples.jsonl` (one row per frame) and `meta.json` (what was expected, what
@@ -163,6 +181,11 @@ These all cost real debugging time and are handled in code:
   nothing can drive the car. See below.
 * `SimulationManager::SetInputState` crashes the game when called from
   `OnRunStep` during a normal race; it is for simulation contexts only.
+* Do not take screenshots of, or click on, an instance while it is collecting.
+  Activating a window steals focus from the instance that is driving, and that
+  is enough to make it drop frames or desync the run outright.
+* Some replays store no inputs at all (`dump_inputs` says so), and there is
+  nothing to re-drive; those are reported `no_inputs` and skipped.
 
 ## Status
 
@@ -181,6 +204,13 @@ These all cost real debugging time and are handled in code:
       when one wedges. Verified: six replays through three instances, all six
       passing first try and reproducing their exact finish times, 1.8x faster
       than one instance, plus a resume run that correctly skipped all six.
+- [x] **5 - Verified on unseen replays.** Twelve fresh replays across all five
+      Nations campaigns and every map type (Race, Acrobatic, Speed, Obstacle,
+      Endurance), on three instances: 10 recorded and reproduced their exact
+      finish times first try, with 0 retries and 0 instance relaunches; 1 was
+      correctly rejected as a desync and 1 as carrying no inputs. `verify`
+      passes all 10 on disk -- 8840 rows, 8840 frames, 8744 of them drawn on
+      their own tick, worst frame lag 10 ms.
 
 ## How fast one instance can go
 

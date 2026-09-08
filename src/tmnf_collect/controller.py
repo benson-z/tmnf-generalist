@@ -81,6 +81,7 @@ class Controller:
         width: int | None = None,
         height: int | None = None,
         force_render: bool | None = None,
+        hide_ui: bool | None = None,
     ) -> None:
         settings: dict[str, object] = {}
         if collect is not None:
@@ -93,6 +94,8 @@ class Controller:
             settings["height"] = height
         if force_render is not None:
             settings["force_render"] = force_render
+        if hide_ui is not None:
+            settings["hide_ui"] = hide_ui
         if settings:
             self._send(protocol.encode_config(**settings))
 

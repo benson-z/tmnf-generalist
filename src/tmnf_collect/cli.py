@@ -7,7 +7,15 @@ import json
 import time
 from pathlib import Path
 
-from . import camera_check, collect as collect_mod, install, launcher, smoke, verify
+from . import (
+    camera_check,
+    collect as collect_mod,
+    install,
+    launcher,
+    smoke,
+    verify,
+    video,
+)
 from .paths import detect
 
 
@@ -52,6 +60,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         period_ms=args.period,
         speed=args.speed,
         force_render=args.force_render,
+        hide_ui=not args.show_ui,
         limit=args.limit,
         image_format=args.format,
         quality=args.quality,
@@ -71,6 +80,18 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     trimmed = {k: v for k, v in summary.items() if k != "results"}
     print(json.dumps(trimmed, indent=2))
     return 0 if not summary["by_status"].get("error") else 1
+
+
+def _cmd_video(args: argparse.Namespace) -> int:
+    summary = video.render_run(
+        Path(args.run),
+        Path(args.out),
+        fps=args.fps,
+        scale=args.scale,
+        limit=args.limit,
+    )
+    print(json.dumps(summary, indent=2))
+    return 0
 
 
 def _cmd_verify(args: argparse.Namespace) -> int:
@@ -196,6 +217,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_collect.add_argument("--force-render", action="store_true")
     p_collect.add_argument(
+        "--show-ui",
+        action="store_true",
+        help="keep the in-game speedometer and clock in the frames",
+    )
+    p_collect.add_argument(
         "--log",
         action="store_true",
         help="save the in-game console log to gamelog.txt",
@@ -208,6 +234,17 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("dataset", help="a dataset directory produced by collect")
     p_verify.add_argument("--period", type=int, default=50)
     p_verify.set_defaults(func=_cmd_verify)
+
+    p_video = sub.add_parser(
+        "video",
+        help="render one recorded run to video with its inputs drawn on",
+    )
+    p_video.add_argument("run", help="a single run directory inside a dataset")
+    p_video.add_argument("--out", default="out/run.mp4")
+    p_video.add_argument("--fps", type=int, default=20)
+    p_video.add_argument("--scale", type=int, default=3)
+    p_video.add_argument("--limit", type=int, default=None)
+    p_video.set_defaults(func=_cmd_video)
 
     args = parser.parse_args(argv)
     return args.func(args)

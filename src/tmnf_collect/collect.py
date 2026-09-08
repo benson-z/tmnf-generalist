@@ -231,6 +231,7 @@ def run_job(
                     "period_ms": session.period_ms,
                     "frame_size": [session.width, session.height],
                     "force_render": session.force_render,
+                    "hide_ui": session.hide_ui,
                 }
             )
     except (SessionError, OSError, ConnectionError) as exc:
@@ -287,6 +288,7 @@ def _worker(
     period_ms: int,
     speed: float,
     force_render: bool,
+    hide_ui: bool,
     image_format: str,
     quality: int,
     retries: int,
@@ -311,6 +313,7 @@ def _worker(
             height=height,
             period_ms=period_ms,
             force_render=force_render,
+            hide_ui=hide_ui,
         )
         session.start()
         session.prepare(speed=speed)
@@ -382,6 +385,7 @@ def collect(
     period_ms: int = 50,
     speed: float = 1.0,
     force_render: bool = False,
+    hide_ui: bool = True,
     limit: int | None = None,
     image_format: str = "jpeg",
     quality: int = 90,
@@ -443,6 +447,7 @@ def collect(
                     period_ms=period_ms,
                     speed=speed,
                     force_render=force_render,
+                    hide_ui=hide_ui,
                     image_format=image_format,
                     quality=quality,
                     retries=retries,
