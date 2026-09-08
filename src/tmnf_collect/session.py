@@ -100,6 +100,7 @@ class Session:
         self.controller: Controller | None = None
         self.instance: GameInstance | None = None
         self.game_state = 0  # unknown until the game reports one
+        self._console_hidden = False
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -263,12 +264,19 @@ class Session:
                 f"could not get back to the menu (state={self.game_state})"
             )
 
-    def prepare(self, *, speed: float = 1.0) -> None:
+    def prepare(
+        self,
+        *,
+        speed: float = 1.0,
+        unfocused_fps_limit: bool = False,
+        hide_console: bool = True,
+    ) -> None:
         """Settings a collecting instance always wants."""
         for command in (
             # Otherwise the game throttles itself whenever its window is not
-            # focused, which a headless collector's windows never are.
-            "set unfocused_fps_limit false",
+            # focused, which a headless collector's windows never are. Leaving
+            # it on costs throughput but paces rendering normally.
+            f"set unfocused_fps_limit {str(unfocused_fps_limit).lower()}",
             # TMInterface watches loaded scripts and rewinds the run when it
             # thinks one changed, which restarts a recording mid-flight. The
             # nofinish half can also suppress the finish we detect runs by.
@@ -287,6 +295,13 @@ class Session:
             f"set speed {speed}",
         ):
             self._command(command)
+
+        # The console is only a toggle, and it starts visible, so this is done
+        # once per instance. Off by default: it flickers while the game renders
+        # unlocked, and it is one less thing drawing over the game.
+        if hide_console and not self._console_hidden:
+            self._command("toggle_console")
+            self._console_hidden = True
 
     def dump_inputs(
         self, staged_replay: str, script_name: str, *, timeout: float = 25.0

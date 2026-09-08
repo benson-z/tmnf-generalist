@@ -21,8 +21,18 @@ finishes at a different millisecond did not reproduce, and is marked
 `time_mismatch` rather than quietly kept. A run that never finishes at all is
 marked `unfinished`. Not every replay re-drives: a long one can diverge and
 leave the car crashed somewhere, so recording stops once the race clock passes
-the replay's own time by a margin instead of waiting out the timeout. That is a
-property of the replay, so it is not retried.
+the replay's own time by a margin instead of waiting out the timeout.
+
+Re-driving is deterministic, so this is not worth retrying: the same replay
+diverges at the same instant every time. B08-Endurance was re-driven three
+times and produced identical checkpoint times, an identical crash position and
+an identical sample count on all three. The extracted script is a faithful,
+repeatable copy of *itself* but not a bit-exact copy of the original ghost.
+
+It is not about run length. Four replays from 116 s to 177 s -- one of them 73%
+longer than the one that fails -- all reproduced to the millisecond. Whatever
+makes a replay unreproducible is a property of that replay, not of how long it
+is, and the finish-time check is what catches it.
 
 Nothing in the pipeline validates a replay in-game. `validate_replay` works,
 but it ends on a modal "this replay is valid" dialog, and while that dialog is
@@ -200,17 +210,18 @@ These all cost real debugging time and are handled in code:
       their exact finish times (24540 / 16250 / 18750 ms), every gap 50 ms, no
       drops, frames and rows equal.
 - [x] **4 - Throughput.** Several instances in parallel on their own ports,
-      user directories and share of the queue, resume, and instance recycling
-      when one wedges. Verified: six replays through three instances, all six
+      user directories and share of the queue, and resume.
+      Verified: six replays through three instances, all six
       passing first try and reproducing their exact finish times, 1.8x faster
       than one instance, plus a resume run that correctly skipped all six.
 - [x] **5 - Verified on unseen replays.** Twelve fresh replays across all five
       Nations campaigns and every map type (Race, Acrobatic, Speed, Obstacle,
       Endurance), on three instances: 10 recorded and reproduced their exact
-      finish times first try, with 0 retries and 0 instance relaunches; 1 was
-      correctly rejected as a desync and 1 as carrying no inputs. `verify`
-      passes all 10 on disk -- 8840 rows, 8840 frames, 8744 of them drawn on
-      their own tick, worst frame lag 10 ms.
+      finish times first try, with 0 retries; 1 was correctly rejected as a
+      desync and 1 as carrying no inputs. `verify` passes all 10 on disk --
+      8840 rows, 8840 frames, 8744 of them drawn on their own tick, worst frame
+      lag 10 ms. A further four long replays (116 s to 177 s) all reproduced
+      exactly: 11358 more rows, 11358 frames, 4/4 passing verify.
 
 ## How fast one instance can go
 
@@ -232,8 +243,8 @@ instances rather than from raising the speed of one. Every sample carries
 dataset rather than having to be trusted.
 
 Recording still checks that the car is actually moving, and reloads the map (or
-relaunches the instance) if it is not, so a stationary run can never be written
-out as if it were real.
+reloads the map if it is not, so a stationary run can never be written out as
+if it were real.
 
 ## Why parallel instances used to record stationary cars
 
@@ -272,7 +283,9 @@ still overlap. Measured over the same six replays on three instances:
 
 Recovering from a wedged instance cost most of the parallel speed-up, which is
 why fixing this made three instances 1.8x faster than one (113 s vs 209 s)
-rather than barely faster.
+rather than barely faster. With the cause fixed there is nothing left for an
+instance relaunch to rescue, so that recovery path has been removed: a job that
+fails is reported and the queue moves on.
 
 ## What forced rendering does to the camera
 

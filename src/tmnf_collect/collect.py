@@ -47,7 +47,6 @@ class JobResult:
     dropped: int = 0
     preroll_restarts: int = 0
     attempts: int = 1  # how many times the job had to be driven
-    restarted_instance: bool = False
     seconds: float = 0.0
     instance: int = 0
     detail: str = ""
@@ -260,21 +259,16 @@ def already_done(out_root: Path, job: Job) -> bool:
     return meta.get("status") == "ok"
 
 
-# Worth re-driving on the same instance. Desyncs are in here because they are
-# not reliably a property of the replay: a run that failed to reproduce once has
-# been seen to reproduce exactly on the next attempt.
+# Worth re-driving on the same instance. "unfinished" is deliberately absent:
+# re-driving a desync was measured to be bit-identical three times over -- same
+# checkpoint times, same crash position -- so a retry only costs another run.
 RETRY_STATUSES = (
     "restarted",
     "not_driven",
     "error",
-    "unfinished",
     "time_mismatch",
     "dropped_frames",
 )
-# Worth a fresh game: the instance itself is in a bad way, and re-driving on it
-# will keep failing the same way.
-RELAUNCH_STATUSES = ("restarted", "not_driven", "error")
-
 
 def _worker(
     shard: list[Job],
@@ -289,6 +283,8 @@ def _worker(
     speed: float,
     force_render: bool,
     hide_ui: bool,
+    unfocused_fps_limit: bool,
+    hide_console: bool,
     image_format: str,
     quality: int,
     retries: int,
@@ -296,13 +292,7 @@ def _worker(
     results: list[JobResult],
     progress: Callable[[JobResult], None] | None,
 ) -> None:
-    """Run one game instance over its share of the queue.
-
-    Running several instances at once occasionally leaves one unable to get the
-    inputs into the car, and no amount of re-driving on that instance fixes it,
-    so a job that keeps failing gets a freshly launched game rather than being
-    written off.
-    """
+    """Run one game instance over its share of the queue."""
 
     def new_session() -> Session:
         session = Session(
@@ -316,7 +306,11 @@ def _worker(
             hide_ui=hide_ui,
         )
         session.start()
-        session.prepare(speed=speed)
+        session.prepare(
+            speed=speed,
+            unfocused_fps_limit=unfocused_fps_limit,
+            hide_console=hide_console,
+        )
         return session
 
     session = new_session()
@@ -335,24 +329,7 @@ def _worker(
                     image_format=image_format,
                     quality=quality,
                 )
-            restarted_instance = False
-            if result.status in RELAUNCH_STATUSES:
-                if capture_log:
-                    _save_log(session, out_root, instance_id, suffix="_wedged")
-                session.close()
-                session = new_session()
-                restarted_instance = True
-                attempts += 1
-                result = run_job(
-                    session,
-                    job,
-                    out_root,
-                    image_format=image_format,
-                    quality=quality,
-                )
-
             result.attempts = attempts
-            result.restarted_instance = restarted_instance
             result.instance = instance_id
             results.append(result)
             if progress is not None:
@@ -364,11 +341,9 @@ def _worker(
         session.close()
 
 
-def _save_log(
-    session: Session, out_root: Path, instance_id: int, suffix: str = ""
-) -> None:
+def _save_log(session: Session, out_root: Path, instance_id: int) -> None:
     try:
-        (out_root / f"gamelog_{instance_id}{suffix}.txt").write_text(
+        (out_root / f"gamelog_{instance_id}.txt").write_text(
             session.console_log(), encoding="utf-8"
         )
     except (OSError, ConnectionError):
@@ -386,6 +361,8 @@ def collect(
     speed: float = 1.0,
     force_render: bool = False,
     hide_ui: bool = True,
+    unfocused_fps_limit: bool = False,
+    hide_console: bool = True,
     limit: int | None = None,
     image_format: str = "jpeg",
     quality: int = 90,
@@ -448,6 +425,8 @@ def collect(
                     speed=speed,
                     force_render=force_render,
                     hide_ui=hide_ui,
+                    unfocused_fps_limit=unfocused_fps_limit,
+                    hide_console=hide_console,
                     image_format=image_format,
                     quality=quality,
                     retries=retries,
@@ -482,7 +461,6 @@ def collect(
             1 for r in results if r.status == "ok" and r.attempts == 1
         ),
         "jobs_retried": sum(1 for r in results if r.attempts > 1),
-        "instance_restarts": sum(1 for r in results if r.restarted_instance),
         "arming_retries_total": sum(r.preroll_restarts for r in results),
         "by_status": {
             status: sum(1 for r in results if r.status == status)

@@ -61,6 +61,8 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         speed=args.speed,
         force_render=args.force_render,
         hide_ui=not args.show_ui,
+        unfocused_fps_limit=args.fps_limit,
+        hide_console=not args.show_console,
         limit=args.limit,
         image_format=args.format,
         quality=args.quality,
@@ -71,7 +73,6 @@ def _cmd_collect(args: argparse.Namespace) -> int:
             f"  [{r.instance}] {r.status:14} {r.output_name} "
             f"samples={r.samples} {r.seconds}s "
             f"attempts={r.attempts}"
-            + (" INSTANCE-RESTARTED" if r.restarted_instance else "")
             + (f" arming_retries={r.preroll_restarts}" if r.preroll_restarts else "")
             + (f" {r.detail}" if r.detail else ""),
             flush=True,
@@ -214,6 +215,16 @@ def main(argv: list[str] | None = None) -> int:
         "--no-resume",
         action="store_true",
         help="re-record replays that already have a successful run",
+    )
+    p_collect.add_argument(
+        "--fps-limit",
+        action="store_true",
+        help="keep the game's unfocused FPS limit on (slower, but paces rendering normally)",
+    )
+    p_collect.add_argument(
+        "--show-console",
+        action="store_true",
+        help="leave the TMInterface console on screen during collection",
     )
     p_collect.add_argument("--force-render", action="store_true")
     p_collect.add_argument(
