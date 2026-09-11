@@ -24,7 +24,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .replays import read_challenge, read_replay
+from .replays import ReplayError, read_challenge, read_replay
 
 BASE = "https://tmnf.exchange"
 TRACKS_API = f"{BASE}/api/tracks"
@@ -346,7 +346,13 @@ def download_replay(replay: TmxReplay, into: Path, *, expect_uid: str) -> Path:
         partial.write_bytes(data)
         partial.replace(target)
 
-    info = read_replay(target)
+    try:
+        info = read_replay(target)
+    except ReplayError as exc:
+        # The site occasionally serves a file that is not a replay. Drop it
+        # and move on: one bad download must not end a harvest of thousands.
+        target.unlink(missing_ok=True)
+        raise TmxError(f"replay {replay.replay_id}: {exc}") from exc
     if info.map_uid != expect_uid:
         target.unlink(missing_ok=True)
         raise TmxError(
