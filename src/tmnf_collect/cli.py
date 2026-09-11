@@ -70,6 +70,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         hide_ui=not args.show_ui,
         hide_console=not args.show_console,
         camera=args.camera,
+        budget_hours=args.budget_hours,
         settings=config_mod.effective(args, _COLLECT_PARSER),
         strip_intros=not args.keep_intros,
         fetch_maps=args.fetch_maps,
@@ -333,6 +334,15 @@ def main(argv: list[str] | None = None) -> int:
         "--fetch-maps",
         action="store_true",
         help="download missing maps from tmnf.exchange by UID",
+    )
+    p_collect.add_argument(
+        "--budget-hours",
+        type=float,
+        default=None,
+        help=(
+            "stop claiming new maps after this much wall clock; the run in "
+            "progress finishes, and a later collect resumes the rest"
+        ),
     )
     p_collect.add_argument(
         "--keep-intros",

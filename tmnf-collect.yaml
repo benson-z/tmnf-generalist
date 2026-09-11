@@ -17,10 +17,10 @@ collect:
   # or the encoder meets a different-looking world when fine-tuning starts.
   camera: 1
 
-  # 320x240 out of a 640x480 render: a clean 2:1 downscale. Always downscale
-  # further at training time, never up.
-  width: 320
-  height: 240
+  # 160x120 out of a 640x480 render: a clean 4:1 downscale, and the size the
+  # published TMNF RL work trains on. Frames cost a quarter of 320x240.
+  width: 160
+  height: 120
 
   # 20 Hz frames. Inputs are recorded at 100 Hz regardless, into inputs.jsonl,
   # because 74-84% of keyboard transitions fall between 20 Hz sample points.
@@ -54,9 +54,10 @@ harvest:
   # far too slow to imitate, records are edge-of-control and near identical.
   prefer: median
 
-  # These teach nothing about racing. Well-awarded maps predate TMX's multi-tag
-  # support and carry exactly one tag each, so excluding is unambiguous.
-  exclude_tags: LOL,PressForward,RPG,Trial,Maze
+  # Not racing. Well-awarded maps predate TMX's multi-tag support and carry
+  # exactly one tag each, so excluding is unambiguous; what is left is the
+  # natural mix of Race / FullSpeed / Tech / SpeedTech / Offroad and the rest.
+  exclude_tags: LOL,PressForward,RPG,Trial,Maze,Stunt,Story
 
 filter:
   # Keyboard is instant full lock, a pad emits continuous values; mixed, the

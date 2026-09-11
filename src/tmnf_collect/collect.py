@@ -312,6 +312,7 @@ def _worker(
     capture_log: bool,
     all_done: threading.Barrier | None,
     failures: list[str],
+    deadline: float | None,
     results: list[JobResult],
     progress: Callable[[JobResult], None] | None,
 ) -> None:
@@ -341,6 +342,10 @@ def _worker(
     session = new_session()
     try:
         while True:
+            # A time budget stops us *claiming* work, never mid-run: the map
+            # in progress always finishes, so nothing half-written is left.
+            if deadline is not None and time.monotonic() >= deadline:
+                break
             try:
                 job = pending.get_nowait()
             except queue.Empty:
@@ -435,6 +440,7 @@ def collect(
     hide_ui: bool = True,
     hide_console: bool = True,
     camera: int | None = None,
+    budget_hours: float | None = None,
     settings: dict | None = None,
     strip_intros: bool = False,
     fetch_maps: bool = False,
@@ -476,6 +482,7 @@ def collect(
     # Released only when the whole queue is drained, so no window closes while
     # another instance is still recording.
     all_done = threading.Barrier(instances) if instances > 1 else None
+    deadline = started + budget_hours * 3600 if budget_hours else None
     results: list[JobResult] = []
     threads: list[threading.Thread] = []
     per_instance: list[list[JobResult]] = []
@@ -511,6 +518,7 @@ def collect(
                     capture_log=capture_log,
                     all_done=all_done,
                     failures=failures,
+                    deadline=deadline,
                     results=collected,
                     progress=progress,
                 )
@@ -533,6 +541,10 @@ def collect(
         "replays_found": len(paths),
         "instances": instances,
         "skipped_already_done": resumed,
+        # Left on the queue when the time budget ran out; a later collect
+        # over the same folder resumes with exactly these.
+        "not_started": pending.qsize(),
+        "budget_hours": budget_hours,
         "recorded": len(results),
         "ok": sum(1 for r in results if r.status == "ok"),
         # An "ok" that needed several goes still means the bug fired, so these
