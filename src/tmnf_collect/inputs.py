@@ -5,34 +5,19 @@ key press is instant full lock, while a pad emits a continuous value. Mixed into
 one training set the same corner carries contradictory labels, so a corpus should
 be one or the other.
 
-This runs as a pass of its own, before any recording, and takes whichever of two
-routes is available.
-
-If `pygbx` is installed it reads the replay's ghost directly and needs no game at
-all: about 10 ms per replay. Otherwise it falls back to asking a running game to
-`dump_inputs` each file, which is correct but costs a game launch plus roughly a
-second per replay. Both were checked against the same replays and agreed on
-every one.
-
-pygbx is not a hard dependency because it pulls in `python-lzo`, whose newest
-wheels are cp311 and would pin this project to Python 3.11. Install it if the
-corpus is large enough for the speed to matter:
-
-    uv pip install pygbx
+This runs as a pass of its own, before any recording, and needs no game: pygbx
+reads each replay's ghost directly, about 10 ms a file. A replay it cannot read
+is set aside as unreadable rather than guessed at.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import replays as replay_files
-from . import staging
-from .paths import Layout, detect
-from .session import NoInputsError, Session, SessionError
 
 KEYBOARD = "keyboard"
 PAD = "pad"
@@ -40,25 +25,9 @@ NO_INPUTS = "no_inputs"
 TOO_LONG = "too_long"
 UNREADABLE = "unreadable"
 
-# TMInterface writes an analog `steer <value>` line for a pad replay, and
-# `press left` / `press right` for a keyboard one.
-_ANALOG = re.compile(r"^\s*[\d.:]+(?:-[\d.:]+)?\s+steer\s+-?\d+", re.MULTILINE)
-_DIGITAL = re.compile(
-    r"^\s*[\d.:]+(?:-[\d.:]+)?\s+(?:press|rel)\s+(?:up|down|left|right)",
-    re.MULTILINE,
-)
-
-
 def classify_replay(path: Path) -> str | None:
-    """Classify a replay by reading its ghost, without a game.
-
-    Returns None when pygbx is unavailable or cannot read the file, so the
-    caller can fall back to asking the game.
-    """
-    try:
-        from pygbx import Gbx, GbxType
-    except ImportError:
-        return None
+    """Classify a replay by reading its ghost. None if it cannot be read."""
+    from pygbx import Gbx, GbxType
 
     try:
         # Hand it the bytes, not the path: pygbx opens a path and never closes
@@ -81,23 +50,11 @@ def classify_replay(path: Path) -> str | None:
     return UNREADABLE
 
 
-def classify_script(text: str) -> str:
-    """Which device produced the run this input script came from."""
-    if not text.strip():
-        return NO_INPUTS
-    if _ANALOG.search(text):
-        return PAD
-    if _DIGITAL.search(text):
-        return KEYBOARD
-    return UNREADABLE
-
-
 @dataclass
 class FilterResult:
     counts: dict[str, int] = field(default_factory=dict)
     kept: list[str] = field(default_factory=list)
     moved: list[dict] = field(default_factory=list)
-    read_offline: int = 0  # classified without launching the game
     seconds: float = 0.0
 
 
@@ -106,8 +63,6 @@ def filter_replays(
     *,
     want: str = KEYBOARD,
     max_seconds: float | None = 180.0,
-    port: int = 8477,
-    layout: Layout | None = None,
     dry_run: bool = False,
 ) -> FilterResult:
     """Sort a folder of replays by input device, in one pass, before collecting.
@@ -122,7 +77,6 @@ def filter_replays(
     nothing is thrown away.
     """
     started = time.monotonic()
-    layout = layout or detect()
     result = FilterResult()
 
     rejected_root = folder.parent / f"{folder.name}.rejected"
@@ -130,7 +84,6 @@ def filter_replays(
     if not paths:
         return result
 
-    # Read what can be read without a game; only the leftovers need one.
     verdicts: dict[Path, str] = {}
     for path in paths:
         # Length comes from the uncompressed header, so check it before doing
@@ -144,42 +97,7 @@ def filter_replays(
             verdicts[path] = TOO_LONG
             continue
 
-        kind = classify_replay(path)
-        if kind is not None:
-            verdicts[path] = kind
-    result.read_offline = len(verdicts)
-    undecided = [p for p in paths if p not in verdicts]
-
-    if undecided:
-        # Stage before the game starts: it indexes its Tracks folder at startup
-        # and will not see files added later.
-        staged = {}
-        for path in undecided:
-            try:
-                staged[path] = staging.stage_replay(path, layout)
-            except OSError:
-                verdicts[path] = UNREADABLE
-
-        session = Session(port=port, layout=layout)
-        session.start()
-        try:
-            session.prepare(speed=1.0)
-            for index, path in enumerate(undecided):
-                if path not in staged:
-                    continue
-                try:
-                    script = session.dump_inputs(
-                        staged[path], f"tmnf_filter_{index}.txt"
-                    )
-                    verdicts[path] = classify_script(
-                        script.read_text(encoding="utf-8")
-                    )
-                except NoInputsError:
-                    verdicts[path] = NO_INPUTS
-                except (SessionError, OSError):
-                    verdicts[path] = UNREADABLE
-        finally:
-            session.close()
+        verdicts[path] = classify_replay(path) or UNREADABLE
 
     for path in paths:
         kind = verdicts.get(path, UNREADABLE)
@@ -205,7 +123,6 @@ def filter_replays(
                     "counts": result.counts,
                     "kept": len(result.kept),
                     "moved": result.moved,
-                    "read_offline": result.read_offline,
                     "seconds": result.seconds,
                     "rejected_dir": str(rejected_root),
                 },

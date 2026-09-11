@@ -114,10 +114,9 @@ class RunWriter:
     """Writes one run's frames and records; use as a context manager."""
 
     def __init__(
-        self, root: Path, *, image_format: str = "jpeg", quality: int = 80
+        self, root: Path, *, quality: int = 80
     ) -> None:
         self.paths = RunPaths.under(root)
-        self.image_format = image_format
         self.quality = quality
         self.written = 0
         self.ticks = 0
@@ -150,13 +149,10 @@ class RunWriter:
             "BGRA",
         ).convert("RGB")
         buffer = io.BytesIO()
-        if self.image_format == "jpeg":
-            # 4:2:0 rather than 4:4:4: measured 0.50ms against 1.16ms per
-            # frame and less than half the size, for chroma detail that does
-            # not survive downscaling to a training resolution anyway.
-            image.save(buffer, "JPEG", quality=self.quality, subsampling=2)
-        else:
-            image.save(buffer, self.image_format.upper())
+        # JPEG 4:2:0. Measured per frame: 0.50ms against 1.16ms for 4:4:4, at
+        # less than half the size, for chroma detail that does not survive
+        # downscaling to a training resolution; PNG was 13.6ms, WebP 35ms.
+        image.save(buffer, "JPEG", quality=self.quality, subsampling=2)
         return buffer.getvalue()
 
     def _run(self) -> None:

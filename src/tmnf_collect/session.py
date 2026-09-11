@@ -19,7 +19,6 @@ from .paths import Layout, detect
 from .protocol import (
     EV_FINISH,
     EV_GAMESTATE,
-    EV_PRERACE,
     EV_RUN_RESET,
     EV_RUN_START,
     Event,
@@ -83,11 +82,8 @@ class Session:
         width: int = 320,
         height: int = 240,
         period_ms: int = 50,
-        force_render: bool = False,
         hide_ui: bool = True,
-        isolate_user_dir: bool = True,
         camera: int = 1,
-        focus_before_run: bool = True,
     ) -> None:
         self.layout = layout or detect()
         self.port = port
@@ -95,11 +91,8 @@ class Session:
         self.width = width
         self.height = height
         self.period_ms = period_ms
-        self.force_render = force_render
         self.hide_ui = hide_ui
-        self.isolate_user_dir = isolate_user_dir
         self.camera = camera
-        self.focus_before_run = focus_before_run
 
         self.controller: Controller | None = None
         self.instance: GameInstance | None = None
@@ -114,11 +107,9 @@ class Session:
 
     def start(self, *, timeout: float = 180.0) -> None:
         """Launch the game and wait for its plugin to connect."""
-        profile = None
-        if self.isolate_user_dir:
-            # Its own copy of the profile the game keys inputs off, so parallel
-            # instances cannot clobber each other's bindings.
-            profile = userdirs.setup(self.layout, self.instance_id)
+        # Its own copy of the profile the game keys inputs off, so parallel
+        # instances cannot clobber each other's bindings.
+        profile = userdirs.setup(self.layout, self.instance_id)
 
         self.controller = Controller(self.port)
         self.instance = launcher.launch(
@@ -143,7 +134,6 @@ class Session:
             period_ms=self.period_ms,
             width=self.width,
             height=self.height,
-            force_render=self.force_render,
             hide_ui=self.hide_ui,
         )
 
@@ -278,19 +268,13 @@ class Session:
                 f"could not get back to the menu (state={self.game_state})"
             )
 
-    def prepare(
-        self,
-        *,
-        speed: float = 1.0,
-        unfocused_fps_limit: bool = False,
-        hide_console: bool = True,
-    ) -> None:
+    def prepare(self, *, hide_console: bool = True) -> None:
         """Settings a collecting instance always wants."""
         for command in (
             # Otherwise the game throttles itself whenever its window is not
             # focused, which a headless collector's windows never are. Leaving
-            # it on costs throughput but paces rendering normally.
-            f"set unfocused_fps_limit {str(unfocused_fps_limit).lower()}",
+            # the throttle on was measured slower and slightly less accurate.
+            "set unfocused_fps_limit false",
             # TMInterface watches loaded scripts and rewinds the run when it
             # thinks one changed, which restarts a recording mid-flight. The
             # nofinish half can also suppress the finish we detect runs by.
@@ -304,12 +288,11 @@ class Session:
             "set skip_map_load_screens true",
             "set draw_game true",
             # A sped-up countdown can skip the tick carrying the run's first
-            # input, which leaves the car parked for the whole run.
+            # input, which leaves the car parked for the whole run. Game speed
+            # stays at 1x: above it the game does not draw a frame for every
+            # sample point (1.5x lost 10 of 36 runs to dropped frames).
             "set countdown_speed 1",
-            f"set speed {speed}",
-            # Input dumps in plain milliseconds; the driving timeline parses
-            # them, and TMInterface loads either format itself.
-            "set format_decimal_time false",
+            "set speed 1",
         ):
             self._command(command)
 
@@ -382,16 +365,14 @@ class Session:
         attempt = 0
         while True:
             attempt += 1
-            if self.focus_before_run:
-                # An instance that is not the foreground window has no input
-                # bindings for TMInterface to drive the car through, and the
-                # run silently plays out with the car parked on the start line
-                # ("no binding for Accelerate found"). Activating the window
-                # before arming is what makes parallel instances work; the
-                # bindings then survive losing focus again for the rest of the
-                # run.
-                self._ctrl.focus()
-                time.sleep(0.4)
+            # An instance that is not the foreground window has no input
+            # bindings for TMInterface to drive the car through, and the run
+            # silently plays out with the car parked on the start line ("no
+            # binding for Accelerate found"). Activating the window before
+            # arming is what makes parallel instances work; the bindings then
+            # survive losing focus again for the rest of the run.
+            self._ctrl.focus()
+            time.sleep(0.4)
             self._command("press delete")
             armed = self._wait_for_event(EV_RUN_RESET, timeout=15.0)
 

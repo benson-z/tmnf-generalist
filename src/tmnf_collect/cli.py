@@ -10,7 +10,6 @@ from collections import Counter
 from pathlib import Path
 
 from . import (
-    camera_check,
     config as config_mod,
     collect as collect_mod,
     inputs as inputs_mod,
@@ -68,17 +67,13 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         width=args.width,
         height=args.height,
         period_ms=args.period,
-        speed=args.speed,
-        force_render=args.force_render,
         hide_ui=not args.show_ui,
-        unfocused_fps_limit=args.fps_limit,
         hide_console=not args.show_console,
         camera=args.camera,
         settings=config_mod.effective(args, _COLLECT_PARSER),
         strip_intros=not args.keep_intros,
         fetch_maps=args.fetch_maps,
         limit=args.limit,
-        image_format=args.format,
         quality=args.quality,
         capture_log=args.log,
         instances=args.instances,
@@ -98,13 +93,10 @@ def _cmd_collect(args: argparse.Namespace) -> int:
 
 
 def _cmd_filter(args: argparse.Namespace) -> int:
-    layout = detect(game=args.game, profile=args.profile)
     result = inputs_mod.filter_replays(
         Path(args.replays),
         want=args.inputs,
         max_seconds=args.max_seconds,
-        port=args.port,
-        layout=layout,
         dry_run=args.dry_run,
     )
     print(
@@ -115,7 +107,6 @@ def _cmd_filter(args: argparse.Namespace) -> int:
                 "counts": result.counts,
                 "kept": len(result.kept),
                 "moved": len(result.moved),
-                "read_offline": result.read_offline,
                 "seconds": result.seconds,
                 "dry_run": args.dry_run,
             },
@@ -262,19 +253,6 @@ def _cmd_clean(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_camera(args: argparse.Namespace) -> int:
-    summary = camera_check.run(
-        out_dir=Path(args.out),
-        port=args.port,
-        width=args.width,
-        height=args.height,
-        samples=args.samples,
-        speed_up=args.speed_up,
-    )
-    print(json.dumps(summary, indent=2))
-    return 0
-
-
 def _cmd_smoke(args: argparse.Namespace) -> int:
     summary = smoke.run(
         out_dir=Path(args.out),
@@ -282,9 +260,7 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
         width=args.width,
         height=args.height,
         period_ms=args.period,
-        force_render=args.force_render,
         max_samples=args.samples,
-        speed=args.speed,
         keep_open=args.keep_open,
     )
     print(json.dumps(summary, indent=2))
@@ -323,26 +299,8 @@ def main(argv: list[str] | None = None) -> int:
     p_smoke.add_argument("--height", type=int, default=240)
     p_smoke.add_argument("--period", type=int, default=50)
     p_smoke.add_argument("--samples", type=int, default=120)
-    p_smoke.add_argument("--speed", type=float, default=1.0)
-    p_smoke.add_argument(
-        "--force-render",
-        action="store_true",
-        help="drive rendering from ticks instead of using the game's own frames",
-    )
     p_smoke.add_argument("--keep-open", action="store_true")
     p_smoke.set_defaults(func=_cmd_smoke)
-
-    p_camera = sub.add_parser(
-        "camera-check",
-        help="verify ForceGameRender does not disturb the camera",
-    )
-    p_camera.add_argument("--out", default="out/camera")
-    p_camera.add_argument("--port", type=int, default=8477)
-    p_camera.add_argument("--width", type=int, default=320)
-    p_camera.add_argument("--height", type=int, default=240)
-    p_camera.add_argument("--samples", type=int, default=100)
-    p_camera.add_argument("--speed-up", type=float, default=5.0)
-    p_camera.set_defaults(func=_cmd_camera)
 
     p_collect = sub.add_parser(
         "collect", help="record every replay under a folder into a dataset"
@@ -353,10 +311,8 @@ def main(argv: list[str] | None = None) -> int:
     p_collect.add_argument("--width", type=int, default=320)
     p_collect.add_argument("--height", type=int, default=240)
     p_collect.add_argument("--period", type=int, default=50)
-    p_collect.add_argument("--speed", type=float, default=1.0)
     p_collect.add_argument("--limit", type=int, default=None)
-    p_collect.add_argument("--format", default="jpeg", choices=["jpeg", "png"])
-    p_collect.add_argument("--quality", type=int, default=80)
+    p_collect.add_argument("--quality", type=int, default=80, help="JPEG quality")
     p_collect.add_argument(
         "--instances",
         type=int,
@@ -367,11 +323,6 @@ def main(argv: list[str] | None = None) -> int:
         "--no-resume",
         action="store_true",
         help="re-record replays that already have a successful run",
-    )
-    p_collect.add_argument(
-        "--fps-limit",
-        action="store_true",
-        help="keep the game's unfocused FPS limit on (slower, but paces rendering normally)",
     )
     p_collect.add_argument(
         "--show-console",
@@ -403,7 +354,6 @@ def main(argv: list[str] | None = None) -> int:
             "profile last used"
         ),
     )
-    p_collect.add_argument("--force-render", action="store_true")
     p_collect.add_argument(
         "--show-ui",
         action="store_true",
@@ -549,7 +499,6 @@ def main(argv: list[str] | None = None) -> int:
         default=180.0,
         help="drop runs longer than this; cost is linear in race time",
     )
-    p_filter.add_argument("--port", type=int, default=8477)
     p_filter.add_argument(
         "--dry-run", action="store_true", help="report without moving anything"
     )
@@ -572,7 +521,6 @@ def main(argv: list[str] | None = None) -> int:
         "harvest": p_harvest,
         "filter": p_filter,
         "smoke": p_smoke,
-        "camera-check": p_camera,
     }
     try:
         explicit = None

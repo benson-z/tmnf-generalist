@@ -151,8 +151,7 @@ def run_job(
     job: Job,
     out_root: Path,
     *,
-    image_format: str = "jpeg",
-    quality: int = 90,
+    quality: int = 80,
     timeout: float = 600.0,
 ) -> JobResult:
     """Record one replay on an already-running instance."""
@@ -176,7 +175,6 @@ def run_job(
 
         with RunWriter(
             out_root / job.output_name,
-            image_format=image_format,
             quality=quality,
         ) as writer:
             run = session.record_map_run(
@@ -254,7 +252,6 @@ def run_job(
                     "clean_start": run.clean_start,
                     "period_ms": session.period_ms,
                     "frame_size": [session.width, session.height],
-                    "force_render": session.force_render,
                     "hide_ui": session.hide_ui,
                 }
             )
@@ -307,13 +304,9 @@ def _worker(
     width: int,
     height: int,
     period_ms: int,
-    speed: float,
-    force_render: bool,
     hide_ui: bool,
-    unfocused_fps_limit: bool,
     hide_console: bool,
     camera: int | None,
-    image_format: str,
     quality: int,
     retries: int,
     capture_log: bool,
@@ -338,16 +331,11 @@ def _worker(
             width=width,
             height=height,
             period_ms=period_ms,
-            force_render=force_render,
             hide_ui=hide_ui,
             camera=camera,
         )
         session.start()
-        session.prepare(
-            speed=speed,
-            unfocused_fps_limit=unfocused_fps_limit,
-            hide_console=hide_console,
-        )
+        session.prepare(hide_console=hide_console)
         return session
 
     session = new_session()
@@ -359,7 +347,7 @@ def _worker(
                 break
             attempts = 1
             result = run_job(
-                session, job, out_root, image_format=image_format, quality=quality
+                session, job, out_root, quality=quality
             )
             if result.status in RETRY_STATUSES and retries:
                 attempts += 1
@@ -367,7 +355,6 @@ def _worker(
                     session,
                     job,
                     out_root,
-                    image_format=image_format,
                     quality=quality,
                 )
             result.attempts = attempts
@@ -400,7 +387,7 @@ def _worker(
             _save_log(session, out_root, instance_id)
 
         # Out of work, but not closing yet -- see the barrier below. An idle
-        # instance still renders, and unfocused_fps_limit is off so it renders
+        # instance still renders, and the fps throttle is off so it renders
         # flat out, taking GPU from the instances still recording. Stop drawing
         # instead: nothing is being captured from this one any more.
         try:
@@ -445,17 +432,13 @@ def collect(
     width: int = 320,
     height: int = 240,
     period_ms: int = 50,
-    speed: float = 1.0,
-    force_render: bool = False,
     hide_ui: bool = True,
-    unfocused_fps_limit: bool = False,
     hide_console: bool = True,
     camera: int | None = None,
     settings: dict | None = None,
     strip_intros: bool = False,
     fetch_maps: bool = False,
     limit: int | None = None,
-    image_format: str = "jpeg",
     quality: int = 90,
     capture_log: bool = False,
     retries: int = 1,
@@ -520,13 +503,9 @@ def collect(
                     width=width,
                     height=height,
                     period_ms=period_ms,
-                    speed=speed,
-                    force_render=force_render,
                     hide_ui=hide_ui,
-                    unfocused_fps_limit=unfocused_fps_limit,
                     hide_console=hide_console,
                     camera=camera,
-                    image_format=image_format,
                     quality=quality,
                     retries=retries,
                     capture_log=capture_log,

@@ -17,16 +17,12 @@ PROTO_VERSION = 5
 MSG_HELLO = 0x01
 MSG_SAMPLE = 0x02
 MSG_EVENT = 0x03
-MSG_LOG = 0x04
-MSG_PONG = 0x05
 MSG_TICK = 0x06
 
 # controller -> plugin
 CMD_COMMAND = 0x10
 CMD_CONFIG = 0x11
-CMD_PING = 0x12
 CMD_FOCUS = 0x14
-CMD_PLAY = 0x13
 
 # event kinds
 EV_RUN_START = 1
@@ -34,7 +30,6 @@ EV_CHECKPOINT = 2
 EV_FINISH = 3
 EV_GAMESTATE = 4
 EV_RUN_RESET = 5
-EV_PRERACE = 6  # countdown tick; the first one means the intro is over
 
 EVENT_NAMES = {
     EV_RUN_START: "run_start",
@@ -42,7 +37,6 @@ EVENT_NAMES = {
     EV_FINISH: "finish",
     EV_GAMESTATE: "gamestate",
     EV_RUN_RESET: "run_reset",
-    EV_PRERACE: "prerace",
 }
 
 _HELLO = struct.Struct("<IiIH")
@@ -122,11 +116,6 @@ class Sample:
     pixels: bytes  # BGRA, top-to-bottom, width * height * 4 bytes
 
 
-@dataclass(frozen=True)
-class Pong:
-    payload: str
-
-
 class ProtocolError(RuntimeError):
     pass
 
@@ -142,7 +131,7 @@ class MessageReader:
         self._sock = sock
         self._buf = bytearray()
 
-    def read(self) -> Hello | Sample | Tick | Event | Pong:
+    def read(self) -> Hello | Sample | Tick | Event:
         while True:
             parsed = self._try_parse()
             if parsed is not None:
@@ -154,7 +143,7 @@ class MessageReader:
                 raise ConnectionError("plugin closed the connection")
             self._buf += chunk
 
-    def _try_parse(self) -> tuple[Hello | Sample | Tick | Event | Pong, int] | None:
+    def _try_parse(self) -> tuple[Hello | Sample | Tick | Event, int] | None:
         """Parse one message from the head of the buffer, if it is all there."""
         buf = self._buf
         if len(buf) < 1:
@@ -239,15 +228,6 @@ class MessageReader:
             )
             return hello, end + token_len
 
-        if kind in (MSG_PONG, MSG_LOG):
-            if len(buf) < 3:
-                return None
-            (length,) = struct.unpack_from("<H", buf, 1)
-            if len(buf) < 3 + length:
-                return None
-            payload = bytes(buf[3 : 3 + length]).decode("utf-8", "replace")
-            return Pong(payload=payload), 3 + length
-
         raise ProtocolError(f"unknown message id 0x{kind:02x}")
 
 
@@ -258,7 +238,7 @@ def encode_command(text: str) -> bytes:
 
 
 def encode_config(**settings: object) -> bytes:
-    """Runtime plugin settings: collect, period, width, height, force_render."""
+    """Runtime plugin settings: collect, period, width, height, hide_ui."""
     parts = []
     for key, value in settings.items():
         if isinstance(value, bool):
@@ -268,17 +248,6 @@ def encode_config(**settings: object) -> bytes:
     return struct.pack("<BH", CMD_CONFIG, len(body)) + body
 
 
-def encode_play(script_name: str) -> bytes:
-    """Arm the plugin to replay an input script. Empty name disarms."""
-    body = script_name.encode("utf-8")
-    return struct.pack("<BH", CMD_PLAY, len(body)) + body
-
-
 def encode_focus() -> bytes:
     """Bring this instance's game window to the foreground."""
     return struct.pack("<BH", CMD_FOCUS, 0)
-
-
-def encode_ping(payload: str = "") -> bytes:
-    body = payload.encode("utf-8")
-    return struct.pack("<BH", CMD_PING, len(body)) + body

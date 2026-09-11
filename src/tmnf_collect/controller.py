@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from . import protocol
-from .protocol import Event, Hello, MessageReader, Pong, Sample
+from .protocol import Event, Hello, MessageReader, Sample
 
 
 class Controller:
@@ -80,7 +80,6 @@ class Controller:
         period_ms: int | None = None,
         width: int | None = None,
         height: int | None = None,
-        force_render: bool | None = None,
         hide_ui: bool | None = None,
     ) -> None:
         settings: dict[str, object] = {}
@@ -92,27 +91,18 @@ class Controller:
             settings["width"] = width
         if height is not None:
             settings["height"] = height
-        if force_render is not None:
-            settings["force_render"] = force_render
         if hide_ui is not None:
             settings["hide_ui"] = hide_ui
         if settings:
             self._send(protocol.encode_config(**settings))
 
-    def play(self, script_name: str) -> None:
-        """Have the plugin replay an input script, bypassing key bindings."""
-        self._send(protocol.encode_play(script_name))
-
     def focus(self) -> None:
         """Bring this instance's window forward."""
         self._send(protocol.encode_focus())
 
-    def ping(self, payload: str = "ping") -> None:
-        self._send(protocol.encode_ping(payload))
-
     # -- inbound -----------------------------------------------------------
 
-    def messages(self) -> Iterator[Sample | Event | Pong | Hello]:
+    def messages(self) -> Iterator[Sample | Event | Hello]:
         """Yield messages until the plugin disconnects."""
         if self._reader is None:
             raise ConnectionError("no plugin connected")
@@ -122,7 +112,7 @@ class Controller:
             except (ConnectionError, OSError):
                 return
 
-    def poll(self, timeout: float) -> Sample | Event | Pong | Hello | None:
+    def poll(self, timeout: float) -> Sample | Event | Hello | None:
         """Read one message, or return None if none arrived within ``timeout``.
 
         A timeout leaves any partial message buffered, so the next call resumes

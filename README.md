@@ -48,10 +48,11 @@ Sampling lives in an AngelScript plugin loaded by TMInterface:
   it. Each sample records both the tick its telemetry came from and the tick
   the game had reached when the frame was drawn, so any lag between the two is
   visible in the data rather than assumed to be zero.
-* `Graphics::ForceGameRender()` can drive that render from the tick instead
-  (`--force-render`), removing the lag, but it shifts the chase camera's follow
-  distance. See "What forced rendering does to the camera" below. Off by
-  default.
+* The game is never asked to render on demand. Forcing a render from the tick
+  removes the lag but moves the chase camera's eye about a metre (its follow
+  distance is smoothed per drawn frame), and does so differently at every
+  game speed. Natural rendering keeps up at 1x, and a sample point the game
+  does not draw is counted as dropped and fails the run.
 * Frames (BGRA), input state and telemetry go out over a `Net::Socket` to the
   Python controller, which writes the dataset. There is no file-write API in
   the plugin sandbox, so the socket is the only way out.
@@ -79,7 +80,6 @@ uv run tmnf-collect paths           # show what was detected on this machine
 uv run tmnf-collect install-plugin  # copy the plugin into TMInterface
 uv run tmnf-collect launch          # start one instance, already logged in
 uv run tmnf-collect smoke           # launch, drive a fixed script, save frames
-uv run tmnf-collect camera-check    # measure what forced rendering does
 uv run tmnf-collect verify <dir>    # check a recorded dataset on disk
 uv run tmnf-collect clean <dir>     # move failed runs out of a dataset
 uv run tmnf-collect stats <dir>     # graph run lengths and map tags
@@ -399,28 +399,18 @@ These all cost real debugging time and are handled in code:
       whose map was not on the machine was recorded end to end via
       `--fetch-maps`, reproducing its 43950 ms finish exactly.
 
-## How fast one instance can go
+## Game speed stays at 1x
 
-Sampling is clocked on game time, so raising `speed` does not change *what*
-gets recorded, but the frames still have to come from somewhere. With natural
-rendering the game decides when it draws, and past a certain speed it outruns
-itself. Measured with `smoke --samples 200` on this machine:
+Sampling is clocked on game time, so raising the speed does not change *what*
+gets recorded -- but frames need `20 x speed` draws per second of race time,
+and the game draws roughly 60-100. Measured on the 36-map set at 6 instances:
+1.5x lost 10 of 36 runs to dropped sample points, 2x lost 25. Throughput comes
+from running several instances at 1x, never from speeding one up. Every sample
+carries `render_race_time` and a running `dropped` count, so this is checkable
+in any dataset rather than having to be trusted.
 
-| game speed | dropped sample points | gaps | frames drawn on the sample's own tick |
-|---|---|---|---|
-| 1x | 0 | all 50 ms | 199 / 200 |
-| 3x | 0 | all 50 ms | 89 / 200 |
-| 5x | 2 | 50 and 100 ms | 55 / 200 |
-
-So 1x is exact, and beyond that frames start being drawn a tick or two late
-until sample points are missed outright. Throughput comes from running several
-instances rather than from raising the speed of one. Every sample carries
-`render_race_time` and a running `dropped` count, so this is checkable in any
-dataset rather than having to be trusted.
-
-Recording still checks that the car is actually moving, and reloads the map (or
-reloads the map if it is not, so a stationary run can never be written out as
-if it were real.
+Recording also checks that the car is actually moving, and re-arms the run if
+it is not, so a stationary run can never be written out as if it were real.
 
 ## Why parallel instances used to record stationary cars
 
@@ -463,24 +453,24 @@ rather than barely faster. With the cause fixed there is nothing left for an
 instance relaunch to rescue, so that recovery path has been removed: a job that
 fails is reported and the queue moves on.
 
-## What forced rendering does to the camera
+## Why the camera is left alone
 
-`Graphics::ForceGameRender()` does **not** hijack or break the camera: every
-frame comes out of the normal chase camera. `tmnf-collect camera-check` drives
-one deterministic script three times on one instance (forced at 1x, natural
-frames at 1x, forced at 5x) and compares images at identical race times. The
-car reproduces exactly (0.00 m difference), so anything left is the camera:
+Forcing a render (`Graphics::ForceGameRender()`) looked like the way to speed
+collection up: it draws a frame at every sample point whatever the game speed.
+It was measured against natural rendering on one deterministic script, with the
+car reproducing to 0.00 m so anything left is the camera:
 
-| comparison | camera angle | camera position | mean pixel diff |
-|---|---|---|---|
-| forced 1x vs natural 1x | max 0.28 rad | mean 0.75 m, max 1.69 m | 22.8 / 255 |
-| forced 1x vs forced 5x | max 0.03 rad | mean 0.87 m, max 1.89 m | 17.0 / 255 |
+| comparison | camera position |
+|---|---|
+| natural vs natural | mean 0.05 m |
+| forced vs forced, same speed | mean 0.05 m |
+| natural vs forced | mean 1.04 m, max 2.15 m |
+| forced 1x vs forced 5x | mean 0.96 m |
 
-The camera's aim is stable under speed-up (under 2 degrees), so speeding up
-collection does not change what the camera looks at. What moves is the eye
-position: the chase camera's follow distance is smoothed per rendered frame, so
-it settles differently depending on render cadence, by up to about 1.9 m. That
-is a normal chase-cam view either way, not a broken one, but frames are not
-bit-reproducible across game speeds. Natural rendering is the default for this
-reason. The camera pose is recorded on every sample either way, so the
-variation is measurable rather than invisible.
+Each mode reproduces itself to a few centimetres, so the metre between them is
+systematic, not noise: the chase camera's follow distance is smoothed per drawn
+frame, and anything that changes how often the game draws moves the eye. That
+includes game speed, so forced frames are not even consistent with themselves
+across speeds. Natural rendering at 1x is the one cadence that is both stable
+and what a human sees, and the camera pose is recorded on every sample so the
+variation that remains is measurable rather than invisible.

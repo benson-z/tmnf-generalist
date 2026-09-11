@@ -82,7 +82,6 @@ def launch(
     port: int,
     instance_id: int = 0,
     layout: Layout | None = None,
-    extra_args: str = "",
     profile: str | None = None,
     timeout: float = 120.0,
 ) -> GameInstance:
@@ -97,8 +96,6 @@ def launch(
     game_args = (
         f"/tmnfml_token={token} /tmnfml_port={port} /tmnfml_id={instance_id}"
     )
-    if extra_args:
-        game_args = f"{game_args} {extra_args}"
 
     before = {p["ProcessId"] for p in _processes()}
     subprocess.Popen(

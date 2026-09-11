@@ -30,14 +30,7 @@ collect:
   # speedometer instead of the road.
   show_ui: false
 
-  # Game speed-up is measured to be actively harmful without forced rendering:
-  # 1.5x lost 10 of 36 runs, 2.0x lost 25.
-  speed: 1.0
-  force_render: false
 
-  # Leaving the FPS throttle off. Capping it was measured slower (495s vs 449s)
-  # and slightly worse, because the cap falls below what 20 Hz sampling needs.
-  fps_limit: false
 
   # MediaTracker clips are stripped from the staged copy of each map. Worth
   # about 20s a map, and some intros never end at all without a keypress, which
@@ -48,7 +41,6 @@ collect:
   # JPEG 4:2:0 at q80. 4:4:4 cost 1.16ms a frame against 0.50ms for chroma
   # detail that does not survive downscaling to a training resolution.
   quality: 80
-  format: jpeg
 
 harvest:
   # Only about half of harvested replays are keyboard, and roughly a tenth will

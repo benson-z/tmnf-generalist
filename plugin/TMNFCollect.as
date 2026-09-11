@@ -2,11 +2,12 @@
 // controller over a TCP socket.
 //
 // Sampling is clocked on physics ticks (OnRunStep runs once per 10 ms of race
-// time) rather than on rendered frames, so raising the game speed does not
-// change what gets recorded. Screenshots are only legal inside Render(), so a
-// sample point in OnRunStep stashes the tick's telemetry and calls
-// Graphics::ForceGameRender(), which synchronously runs Render(), where the
-// capture happens.
+// time) rather than on rendered frames. Screenshots are only legal inside
+// Render(), so a sample point in OnRunStep stashes the tick's telemetry and
+// the game's next natural Render() captures it. A sample point the game never
+// draws is counted as dropped, and a run with any dropped points is rejected:
+// forcing an extra render instead was measured to move the chase camera by a
+// metre, and the game only draws often enough to keep up at 1x.
 //
 // Everything on the wire is little-endian.
 
@@ -16,15 +17,12 @@ const uint PROTO_VERSION = 5;
 const uint8 MSG_HELLO = 0x01;
 const uint8 MSG_SAMPLE = 0x02;
 const uint8 MSG_EVENT = 0x03;
-const uint8 MSG_LOG = 0x04;
-const uint8 MSG_PONG = 0x05;
 // One per physics tick: inputs at 100Hz, without a frame attached.
 const uint8 MSG_TICK = 0x06;
 
 // controller -> plugin
 const uint8 CMD_COMMAND = 0x10;
 const uint8 CMD_CONFIG = 0x11;
-const uint8 CMD_PING = 0x12;
 const uint8 CMD_FOCUS = 0x14;
 
 // event kinds
@@ -33,10 +31,6 @@ const uint8 EV_CHECKPOINT = 2;
 const uint8 EV_FINISH = 3;
 const uint8 EV_GAMESTATE = 4;
 const uint8 EV_RUN_RESET = 5;
-// The countdown is ticking: the simulation exists but race time is still
-// negative. Nothing is sent during the intro flythrough before it, so this is
-// the controller's only notice that the intro is over.
-const uint8 EV_PRERACE = 6;
 
 Net::Socket@ g_sock = null;
 bool g_connected = false;
@@ -51,7 +45,6 @@ bool g_collecting = false;
 int g_periodMs = 50; // 20 Hz in race time
 int g_capW = 320;
 int g_capH = 240;
-bool g_forceRender = false;
 // Training frames want the bare game view, without the speedometer,
 // clock and checkpoint widgets drawn over it.
 bool g_hideUi = true;
@@ -61,7 +54,6 @@ uint g_dropped = 0;      // ticks whose frame never got rendered
 int g_lastTickTime = 0;  // most recently simulated tick, for alignment
 int g_lastSampleTime = -1000000;
 int g_prevRaceTime = -1000000;
-int g_lastPreTick = -1000000;  // last countdown tick reported, race time ms
 bool g_prevFinished = false;
 
 // Telemetry for the sample Render() is about to capture.
@@ -214,9 +206,6 @@ void PollCommands()
             Graphics::FocusGameWindow();
         } else if (kind == CMD_CONFIG) {
             ApplyConfig(payload);
-        } else if (kind == CMD_PING) {
-            if (!g_sock.Write(MSG_PONG)) { Fail("pong"); return; }
-            WriteString(payload);
         }
     }
 }
@@ -257,8 +246,6 @@ void ApplyConfigEntry(const string&in entry)
         g_capW = int(Text::ParseInt(value));
     } else if (key == "height") {
         g_capH = int(Text::ParseInt(value));
-    } else if (key == "force_render") {
-        g_forceRender = (value == "1");
     } else if (key == "hide_ui") {
         g_hideUi = (value == "1");
         ApplyRaceInterface();
@@ -410,16 +397,6 @@ void OnRunStep(SimulationManager@ sim)
         SendEvent(EV_RUN_START, raceTime, 0);
         ApplyRaceInterface();
     }
-    // Report the countdown as it runs, rate limited in race time. The first of
-    // these is what tells the controller the intro has finished playing.
-    if (raceTime < 0) {
-        if (raceTime < g_lastPreTick || raceTime - g_lastPreTick >= 100) {
-            g_lastPreTick = raceTime;
-            SendEvent(EV_PRERACE, raceTime, 0);
-        }
-    } else {
-        g_lastPreTick = -1000000;
-    }
     g_prevRaceTime = raceTime;
 
     bool finished = sim.PlayerInfo.RaceFinished;
@@ -437,16 +414,12 @@ void OnRunStep(SimulationManager@ sim)
     if (raceTime == g_lastSampleTime) return;
     g_lastSampleTime = raceTime;
 
-    // Without forced rendering the game decides when it draws; if it has not
-    // drawn since the previous sample point, that sample never became a frame.
+    // The game decides when it draws; if it has not drawn since the previous
+    // sample point, that sample never became a frame.
     if (g_pending) g_dropped++;
 
     StashTelemetry(sim, raceTime);
     g_pending = true;
-    if (g_forceRender) {
-        // Synchronously runs Render(), where CaptureScreenshot is legal.
-        Graphics::ForceGameRender();
-    }
 }
 
 int g_lastCpCount = -1;

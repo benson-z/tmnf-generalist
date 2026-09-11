@@ -37,9 +37,7 @@ def run(
     width: int = 320,
     height: int = 240,
     period_ms: int = 50,
-    force_render: bool = False,
     max_samples: int = 120,
-    speed: float = 1.0,
     keep_open: bool = False,
 ) -> dict:
     """Collect a short run and return a summary. Frames land in ``out_dir``."""
@@ -57,11 +55,10 @@ def run(
         width=width,
         height=height,
         period_ms=period_ms,
-        force_render=force_render,
     )
     session.start()
     try:
-        session.prepare(speed=speed)
+        session.prepare()
         result = session.record_map_run(
             bootstrap_track, script, max_samples=max_samples, timeout=180.0
         )
