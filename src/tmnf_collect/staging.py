@@ -15,6 +15,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from . import mediatracker
 from .paths import Layout, detect
 
 STAGE_DIR = "tmnf-collect"
@@ -37,12 +38,32 @@ def replays_dir(layout: Layout) -> Path:
     return layout.replays_dir / STAGE_DIR
 
 
-def stage_challenge(source: Path, layout: Layout | None = None) -> str:
-    """Copy a ``.Challenge.Gbx`` in and return the name the ``map`` command wants."""
+def stage_challenge(
+    source: Path, layout: Layout | None = None, *, strip_intro: bool = False
+) -> str:
+    """Copy a ``.Challenge.Gbx`` in and return the name the ``map`` command wants.
+
+    With ``strip_intro`` the staged copy has its MediaTracker clips removed,
+    which is what makes the intro flythrough go away. The map keeps its UID, so
+    it is still the map the replay was driven on.
+    """
     layout = layout or detect()
     target_dir = challenges_dir(layout)
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / source.name
+
+    if strip_intro:
+        # Size is how a plain copy decides it is up to date, and a stripped map
+        # is a different size from its source, so mark it instead.
+        marker = target.with_suffix(".stripped")
+        if not target.exists() or not marker.exists():
+            try:
+                removed = mediatracker.strip_file(source, target)
+                marker.write_text(str(removed), encoding="utf-8")
+            except mediatracker.MediaTrackerError:
+                shutil.copyfile(source, target)  # keep the map, keep the intro
+        return f"{STAGE_DIR}/{source.name}"
+
     if not target.exists() or target.stat().st_size != source.stat().st_size:
         shutil.copyfile(source, target)
     return f"{STAGE_DIR}/{source.name}"

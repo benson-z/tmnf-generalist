@@ -11,7 +11,7 @@ import socket
 import struct
 from dataclasses import dataclass
 
-PROTO_VERSION = 3
+PROTO_VERSION = 5
 
 # plugin -> controller
 MSG_HELLO = 0x01
@@ -19,6 +19,7 @@ MSG_SAMPLE = 0x02
 MSG_EVENT = 0x03
 MSG_LOG = 0x04
 MSG_PONG = 0x05
+MSG_TICK = 0x06
 
 # controller -> plugin
 CMD_COMMAND = 0x10
@@ -33,6 +34,7 @@ EV_CHECKPOINT = 2
 EV_FINISH = 3
 EV_GAMESTATE = 4
 EV_RUN_RESET = 5
+EV_PRERACE = 6  # countdown tick; the first one means the intro is over
 
 EVENT_NAMES = {
     EV_RUN_START: "run_start",
@@ -40,9 +42,11 @@ EVENT_NAMES = {
     EV_FINISH: "finish",
     EV_GAMESTATE: "gamestate",
     EV_RUN_RESET: "run_reset",
+    EV_PRERACE: "prerace",
 }
 
 _HELLO = struct.Struct("<IiIH")
+_TICK = struct.Struct("<iB")
 _EVENT = struct.Struct("<Bii")
 _SAMPLE = struct.Struct("<IiI12f4Bii3fI2Bi7fiIHHI")
 assert _SAMPLE.size == 138, _SAMPLE.size
@@ -65,6 +69,23 @@ class Event:
     @property
     def name(self) -> str:
         return EVENT_NAMES.get(self.kind, f"unknown({self.kind})")
+
+
+@dataclass(frozen=True)
+class Tick:
+    """One physics step: what was held, without a frame.
+
+    The simulation steps every 10ms, so these arrive at 100Hz -- five times the
+    frame rate. Keyboard driving is full of taps shorter than a 50ms sample
+    period, and at 20Hz those either vanish or get attributed to the wrong
+    moment.
+    """
+
+    race_time: int
+    up: bool
+    down: bool
+    left: bool
+    right: bool
 
 
 @dataclass(frozen=True)
@@ -121,7 +142,7 @@ class MessageReader:
         self._sock = sock
         self._buf = bytearray()
 
-    def read(self) -> Hello | Sample | Event | Pong:
+    def read(self) -> Hello | Sample | Tick | Event | Pong:
         while True:
             parsed = self._try_parse()
             if parsed is not None:
@@ -133,7 +154,7 @@ class MessageReader:
                 raise ConnectionError("plugin closed the connection")
             self._buf += chunk
 
-    def _try_parse(self) -> tuple[Hello | Sample | Event | Pong, int] | None:
+    def _try_parse(self) -> tuple[Hello | Sample | Tick | Event | Pong, int] | None:
         """Parse one message from the head of the buffer, if it is all there."""
         buf = self._buf
         if len(buf) < 1:
@@ -180,6 +201,20 @@ class MessageReader:
                 pixels=pixels,
             )
             return sample, end + pixel_bytes
+
+        if kind == MSG_TICK:
+            end = 1 + _TICK.size
+            if len(buf) < end:
+                return None
+            race_time, keys = _TICK.unpack_from(buf, 1)
+            tick = Tick(
+                race_time=race_time,
+                up=bool(keys & 1),
+                down=bool(keys & 2),
+                left=bool(keys & 4),
+                right=bool(keys & 8),
+            )
+            return tick, end
 
         if kind == MSG_EVENT:
             end = 1 + _EVENT.size

@@ -4,22 +4,29 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 from . import (
     camera_check,
+    config as config_mod,
     collect as collect_mod,
     inputs as inputs_mod,
     install,
     launcher,
     smoke,
+    stats as stats_mod,
     tmx,
     verify,
     video,
 )
 from .paths import detect
 from . import staging
+
+# Set when the parser is built; used to record what a run was configured with.
+_COLLECT_PARSER: argparse.ArgumentParser | None = None
 
 
 def _cmd_paths(args: argparse.Namespace) -> int:
@@ -66,6 +73,9 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         hide_ui=not args.show_ui,
         unfocused_fps_limit=args.fps_limit,
         hide_console=not args.show_console,
+        camera=args.camera,
+        settings=config_mod.effective(args, _COLLECT_PARSER),
+        strip_intros=not args.keep_intros,
         fetch_maps=args.fetch_maps,
         limit=args.limit,
         image_format=args.format,
@@ -117,9 +127,29 @@ def _cmd_filter(args: argparse.Namespace) -> int:
     return 0 if result.kept else 1
 
 
+def _by_tag(picked: list) -> dict:
+    """Maps and gameplay seconds per tag, heaviest first."""
+    maps: Counter[str] = Counter()
+    seconds: Counter[str] = Counter()
+    for item in picked:
+        name = tmx.tag_names(item.track.tags)
+        maps[name] += 1
+        seconds[name] += item.replay.time_ms / 1000
+    return {
+        name: {"maps": maps[name], "seconds": round(seconds[name], 1)}
+        for name in sorted(maps, key=lambda n: -seconds[n])
+    }
+
+
 def _cmd_harvest(args: argparse.Namespace) -> int:
     layout = detect(game=args.game, profile=args.profile)
     replays_dir = Path(args.out)
+    try:
+        include_tags = tmx.parse_tags(args.tags)
+        exclude_tags = tmx.parse_tags(args.exclude_tags)
+    except tmx.TmxError as exc:
+        print(exc)
+        return 2
     result = tmx.harvest(
         maps_into=staging.challenges_dir(layout),
         replays_into=replays_dir,
@@ -127,6 +157,8 @@ def _cmd_harvest(args: argparse.Namespace) -> int:
         min_author_time=int(args.min_seconds * 1000) if args.min_seconds else None,
         max_author_time=int(args.max_seconds * 1000) if args.max_seconds else None,
         min_awards=args.min_awards,
+        include_tags=include_tags,
+        exclude_tags=exclude_tags,
         prefer=args.prefer,
         dry_run=args.dry_run,
     )
@@ -137,6 +169,7 @@ def _cmd_harvest(args: argparse.Namespace) -> int:
             f"  {item.track.awards:5} awards  "
             f"run {item.replay.time_ms / 1000:6.2f}s  "
             f"(author {item.track.author_time / 1000:6.2f}s)  "
+            f"{tmx.tag_names(item.track.tags)[:16]:16} "
             f"{kind[:18]:18} {item.track.name[:40]}",
             flush=True,
         )
@@ -145,6 +178,12 @@ def _cmd_harvest(args: argparse.Namespace) -> int:
             {
                 "tracks_considered": result.tracks_considered,
                 "picked": len(result.picked),
+                # Seconds are the chosen replays' own times, so this is the
+                # gameplay each tag will cost to record, before overheads.
+                "by_tag": _by_tag(result.picked),
+                "seconds_to_record": round(
+                    sum(i.replay.time_ms for i in result.picked) / 1000, 1
+                ),
                 "author_runs": sum(1 for i in result.picked if i.is_author_run),
                 "skipped": len(result.skipped),
                 "dry_run": args.dry_run,
@@ -184,6 +223,43 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         for problem in check.problems:
             print(f"        - {problem}")
     return 0 if report["failed"] == 0 else 1
+
+
+def _cmd_stats(args: argparse.Namespace) -> int:
+    root = Path(args.dataset)
+    runs, unreadable = stats_mod.read_runs(root, only_ok=not args.all)
+    summary = stats_mod.summarize(runs, bin_seconds=args.bin)
+    print(stats_mod.histogram(summary, width=args.width))
+    if not args.no_tags:
+        tags = stats_mod.tag_counts(root, runs, refresh=args.refresh_tags)
+        summary["tag_counts"] = tags
+        print()
+        print(stats_mod.format_tags(tags))
+    if unreadable:
+        print(f"\n{len(unreadable)} directories had no readable meta.json")
+    if args.png:
+        out = stats_mod.render_png(summary, Path(args.png))
+        print(f"\nwrote {out}")
+    if args.json:
+        Path(args.json).write_text(
+            json.dumps(summary, indent=2), encoding="utf-8"
+        )
+        print(f"wrote {args.json}")
+    return 0
+
+
+def _cmd_clean(args: argparse.Namespace) -> int:
+    summary = verify.clean_dataset(
+        Path(args.dataset),
+        period_ms=args.period,
+        delete=args.delete,
+        dry_run=args.dry_run,
+    )
+    details = summary.pop("details")
+    print(json.dumps(summary, indent=2))
+    for entry in details:
+        print(f"  {entry['reason']:12} {entry['run']:24} {entry['problems'][0]}")
+    return 0
 
 
 def _cmd_camera(args: argparse.Namespace) -> int:
@@ -280,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     p_collect.add_argument("--speed", type=float, default=1.0)
     p_collect.add_argument("--limit", type=int, default=None)
     p_collect.add_argument("--format", default="jpeg", choices=["jpeg", "png"])
-    p_collect.add_argument("--quality", type=int, default=90)
+    p_collect.add_argument("--quality", type=int, default=80)
     p_collect.add_argument(
         "--instances",
         type=int,
@@ -307,6 +383,26 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="download missing maps from tmnf.exchange by UID",
     )
+    p_collect.add_argument(
+        "--keep-intros",
+        action="store_true",
+        help=(
+            "stage maps untouched. By default their MediaTracker clips are "
+            "stripped from the staged copy, which removes the intro flythrough "
+            "(about 20s a map) and the in-race clips that hijack the camera; "
+            "the map keeps its UID and its blocks"
+        ),
+    )
+    p_collect.add_argument(
+        "--camera",
+        type=int,
+        default=1,
+        help=(
+            "race camera 1-9. 1 sits further back and higher than 2 (7.37m vs "
+            "6.24m behind, 3.29m vs 1.70m above); 0 leaves whatever the "
+            "profile last used"
+        ),
+    )
     p_collect.add_argument("--force-render", action="store_true")
     p_collect.add_argument(
         "--show-ui",
@@ -319,6 +415,8 @@ def main(argv: list[str] | None = None) -> int:
         help="save the in-game console log to gamelog.txt",
     )
     p_collect.set_defaults(func=_cmd_collect)
+    global _COLLECT_PARSER
+    _COLLECT_PARSER = p_collect
 
     p_verify = sub.add_parser(
         "verify", help="check a recorded dataset on disk is complete and in order"
@@ -326,6 +424,51 @@ def main(argv: list[str] | None = None) -> int:
     p_verify.add_argument("dataset", help="a dataset directory produced by collect")
     p_verify.add_argument("--period", type=int, default=50)
     p_verify.set_defaults(func=_cmd_verify)
+
+    p_stats = sub.add_parser(
+        "stats", help="graph how a dataset's recorded time is distributed"
+    )
+    p_stats.add_argument("dataset", help="a dataset directory produced by collect")
+    p_stats.add_argument(
+        "--bin", type=float, default=10.0, help="histogram bin width in seconds"
+    )
+    p_stats.add_argument(
+        "--width", type=int, default=48, help="text histogram width in columns"
+    )
+    p_stats.add_argument("--png", default=None, help="also write the graph here")
+    p_stats.add_argument("--json", default=None, help="also write the numbers here")
+    p_stats.add_argument(
+        "--all",
+        action="store_true",
+        help="include runs that did not reproduce their replay",
+    )
+    p_stats.add_argument(
+        "--no-tags",
+        action="store_true",
+        help="skip the map-tag breakdown, which asks TMX the first time",
+    )
+    p_stats.add_argument(
+        "--refresh-tags",
+        action="store_true",
+        help="re-ask TMX for tags instead of using the cached ones",
+    )
+    p_stats.set_defaults(func=_cmd_stats)
+
+    p_clean = sub.add_parser(
+        "clean",
+        help="move runs that fail verify out of a dataset",
+    )
+    p_clean.add_argument("dataset", help="a dataset directory produced by collect")
+    p_clean.add_argument("--period", type=int, default=50)
+    p_clean.add_argument(
+        "--delete",
+        action="store_true",
+        help="remove them instead of moving them to <dataset>.rejected",
+    )
+    p_clean.add_argument(
+        "--dry-run", action="store_true", help="report without touching anything"
+    )
+    p_clean.set_defaults(func=_cmd_clean)
 
     p_video = sub.add_parser(
         "video",
@@ -356,6 +499,22 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=75.0,
         help="long maps cost proportionally more to record and teach less",
+    )
+    p_harvest.add_argument(
+        "--tags",
+        default="",
+        help=(
+            "keep only maps carrying one of these tags, by name or id "
+            "(e.g. Tech,SpeedTech,FullSpeed)"
+        ),
+    )
+    p_harvest.add_argument(
+        "--exclude-tags",
+        default="",
+        help=(
+            "drop maps carrying any of these; LOL,PressForward,RPG,Trial,Maze "
+            "is the set that teaches least about racing"
+        ),
     )
     p_harvest.add_argument(
         "--prefer",
@@ -395,6 +554,37 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="report without moving anything"
     )
     p_filter.set_defaults(func=_cmd_filter)
+
+    parser.add_argument(
+        "--config",
+        default=None,
+        help=f"settings file to read defaults from (default: {config_mod.DEFAULT_NAME})",
+    )
+
+    # Config values become defaults, so anything given on the command line
+    # still overrides them.
+    known = {
+        "collect": p_collect,
+        "verify": p_verify,
+        "stats": p_stats,
+        "clean": p_clean,
+        "video": p_video,
+        "harvest": p_harvest,
+        "filter": p_filter,
+        "smoke": p_smoke,
+        "camera-check": p_camera,
+    }
+    try:
+        explicit = None
+        if argv is not None and "--config" in argv:
+            explicit = argv[argv.index("--config") + 1]
+        elif "--config" in sys.argv:
+            explicit = sys.argv[sys.argv.index("--config") + 1]
+        source = config_mod.find(explicit)
+        config_mod.apply(config_mod.load(source), known, source=source)
+    except (config_mod.ConfigError, IndexError) as exc:
+        print(f"config: {exc}")
+        return 2
 
     args = parser.parse_args(argv)
     return args.func(args)

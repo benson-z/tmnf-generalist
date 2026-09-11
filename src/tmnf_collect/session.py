@@ -19,10 +19,12 @@ from .paths import Layout, detect
 from .protocol import (
     EV_FINISH,
     EV_GAMESTATE,
+    EV_PRERACE,
     EV_RUN_RESET,
     EV_RUN_START,
     Event,
     Sample,
+    Tick,
 )
 
 # TM::GameState values we care about.
@@ -84,6 +86,7 @@ class Session:
         force_render: bool = False,
         hide_ui: bool = True,
         isolate_user_dir: bool = True,
+        camera: int = 1,
         focus_before_run: bool = True,
     ) -> None:
         self.layout = layout or detect()
@@ -95,11 +98,16 @@ class Session:
         self.force_render = force_render
         self.hide_ui = hide_ui
         self.isolate_user_dir = isolate_user_dir
+        self.camera = camera
         self.focus_before_run = focus_before_run
 
         self.controller: Controller | None = None
         self.instance: GameInstance | None = None
         self.game_state = 0  # unknown until the game reports one
+        # Set once the plugin's socket has gone. The game process usually
+        # survives it, so liveness of the process says nothing about whether
+        # this instance can still record.
+        self.lost = False
         self._console_hidden = False
 
     # -- lifecycle ---------------------------------------------------------
@@ -244,7 +252,13 @@ class Session:
                 f"race never started on {staged_name} "
                 f"(state={self.game_state})"
             )
-        self._drain(settle)
+        if self.camera:
+            # `cam` is a console command, so unlike a keystroke it reaches a
+            # background instance. Sent per run rather than once, because
+            # whether it survives a map change is not worth assuming.
+            self._command(f"cam {self.camera}", settle=0.0)
+        if settle:
+            self._drain(settle)
 
     def leave_map(self, *, timeout: float = 60.0) -> None:
         """Return to the menu after a run.
@@ -293,6 +307,9 @@ class Session:
             # input, which leaves the car parked for the whole run.
             "set countdown_speed 1",
             f"set speed {speed}",
+            # Input dumps in plain milliseconds; the driving timeline parses
+            # them, and TMInterface loads either format itself.
+            "set format_decimal_time false",
         ):
             self._command(command)
 
@@ -345,6 +362,7 @@ class Session:
         expected_ms: int | None = None,
         on_sample: Callable[[Sample], None] | None = None,
         on_reset: Callable[[], None] | None = None,
+        on_tick: Callable[[Tick], None] | None = None,
     ) -> RunResult:
         """Load a map, make TMInterface replay ``script_name``, record the run.
 
@@ -357,6 +375,7 @@ class Session:
             # A finished race parks on the medal screen, and no map loads while
             # that is up.
             self.leave_map()
+
         self.load_map(staged_challenge, intro_timeout=map_timeout)
         self._command(f"load {script_name}", settle=0.5)
 
@@ -384,6 +403,7 @@ class Session:
                     expected_ms=expected_ms,
                     on_sample=on_sample,
                     on_reset=on_reset,
+                    on_tick=on_tick,
                 )
             finally:
                 self._ctrl.configure(collect=False)
@@ -413,6 +433,7 @@ class Session:
         expected_ms: int | None,
         on_sample: Callable[[Sample], None] | None,
         on_reset: Callable[[], None] | None = None,
+        on_tick: Callable[[Tick], None] | None = None,
     ) -> RunResult:
         """Record one attempt, bailing out early if the car never moves."""
         controller = self._ctrl
@@ -451,6 +472,15 @@ class Session:
                     finished = True
                     finish_time = message.race_time
                     break
+                continue
+
+            if isinstance(message, Tick):
+                # Inputs at 100Hz. The tick at race time 0 arrives just
+                # before the sample for the same instant, so this cannot wait
+                # for the run to be marked started or it would lose it; a
+                # restart is handled by the writer discarding what it holds.
+                if on_tick is not None:
+                    on_tick(message)
                 continue
 
             if isinstance(message, Sample):

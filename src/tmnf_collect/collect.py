@@ -9,6 +9,7 @@ than quietly kept.
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -32,6 +33,7 @@ class Job:
     staged_challenge: str
     script_name: str
     output_name: str
+    requeued: int = 0  # times another instance died holding this job
 
 
 @dataclass
@@ -75,6 +77,7 @@ def plan(
     layout: Layout | None = None,
     index: ChallengeIndex | None = None,
     fetch_maps: bool = False,
+    strip_intros: bool = False,
 ) -> Plan:
     """Resolve maps and stage every file.
 
@@ -132,7 +135,9 @@ def plan(
                 replay=info,
                 challenge_path=challenge,
                 staged_replay=staging.stage_replay(path, layout),
-                staged_challenge=staging.stage_challenge(challenge, layout),
+                staged_challenge=staging.stage_challenge(
+                    challenge, layout, strip_intro=strip_intros
+                ),
                 script_name=f"tmnf_collect_{name}.txt",
                 output_name=name,
             )
@@ -181,6 +186,7 @@ def run_job(
                 expected_ms=job.replay.race_time,
                 on_sample=writer.add,
                 on_reset=writer.reset,
+                on_tick=writer.add_tick,
             )
             result.samples = run.sample_count
             result.dropped = run.dropped
@@ -238,6 +244,9 @@ def run_job(
                     "status": result.status,
                     "detail": result.detail,
                     "samples": run.sample_count,
+                    "input_ticks": writer.ticks,
+                    "tick_period_ms": 10,  # the simulation's own step
+                    "camera": session.camera,
                     "dropped_sample_points": run.dropped,
                     "arming_retries": run.restarts,
                     "driving": run.driving,
@@ -252,6 +261,8 @@ def run_job(
     except (SessionError, OSError, ConnectionError) as exc:
         result.status = "error"
         result.detail = str(exc)
+        if isinstance(exc, (OSError, ConnectionError)):
+            session.lost = True
 
     try:
         # The medal screen blocks the next map load, so always step back out.
@@ -287,7 +298,7 @@ RETRY_STATUSES = (
 )
 
 def _worker(
-    shard: list[Job],
+    pending: queue.Queue,
     out_root: Path,
     *,
     instance_id: int,
@@ -301,14 +312,23 @@ def _worker(
     hide_ui: bool,
     unfocused_fps_limit: bool,
     hide_console: bool,
+    camera: int | None,
     image_format: str,
     quality: int,
     retries: int,
     capture_log: bool,
+    all_done: threading.Barrier | None,
+    failures: list[str],
     results: list[JobResult],
     progress: Callable[[JobResult], None] | None,
 ) -> None:
-    """Run one game instance over its share of the queue."""
+    """Run one game instance, taking jobs off the queue until it is empty.
+
+    Work is claimed rather than dealt out. Maps vary from ten seconds to over a
+    minute, so a fixed share hands one instance a run of long ones and leaves
+    everybody waiting on it; pulling the next available map instead keeps every
+    instance busy until there is genuinely nothing left.
+    """
 
     def new_session() -> Session:
         session = Session(
@@ -320,6 +340,7 @@ def _worker(
             period_ms=period_ms,
             force_render=force_render,
             hide_ui=hide_ui,
+            camera=camera,
         )
         session.start()
         session.prepare(
@@ -331,7 +352,11 @@ def _worker(
 
     session = new_session()
     try:
-        for job in shard:
+        while True:
+            try:
+                job = pending.get_nowait()
+            except queue.Empty:
+                break
             attempts = 1
             result = run_job(
                 session, job, out_root, image_format=image_format, quality=quality
@@ -347,13 +372,59 @@ def _worker(
                 )
             result.attempts = attempts
             result.instance = instance_id
+
+            # A dead game fails every job it is handed, instantly. With a
+            # shared queue that is not just this instance's problem: left
+            # alone it would claim the rest of the queue and fail all of it.
+            if result.status == "error" and (
+                session.lost or not session.instance.is_alive()
+            ):
+                if job.requeued < 1:
+                    job.requeued += 1
+                    pending.put(job)  # a healthy instance can still record it
+                else:
+                    results.append(result)
+                    if progress is not None:
+                        progress(result)
+                failures.append(
+                    f"instance {instance_id}: lost its plugin connection on "
+                    f"{job.output_name} ({result.detail[:60]})"
+                )
+                break
+
             results.append(result)
             if progress is not None:
                 progress(result)
 
         if capture_log:
             _save_log(session, out_root, instance_id)
+
+        # Out of work, but not closing yet -- see the barrier below. An idle
+        # instance still renders, and unfocused_fps_limit is off so it renders
+        # flat out, taking GPU from the instances still recording. Stop drawing
+        # instead: nothing is being captured from this one any more.
+        try:
+            session._command("set draw_game false", settle=0.0)
+        except (OSError, ConnectionError, SessionError):
+            pass
+    except BaseException:
+        # This instance is not going to reach the barrier, so release everyone
+        # waiting on it rather than holding them for the timeout.
+        if all_done is not None:
+            all_done.abort()
+        raise
     finally:
+        # Closing a game closes its window, and Windows hands the foreground to
+        # the next top-level window -- another instance, which is very likely
+        # still recording, and a recording that changes focus drops frames.
+        # Shards finish at different times, so every early finisher would
+        # disturb the ones still going. Waiting here until the whole queue is
+        # done means all that focus churn happens with nothing left to spoil.
+        if all_done is not None:
+            try:
+                all_done.wait(timeout=3600)
+            except (threading.BrokenBarrierError, RuntimeError):
+                pass  # another instance died; close anyway
         session.close()
 
 
@@ -379,6 +450,9 @@ def collect(
     hide_ui: bool = True,
     unfocused_fps_limit: bool = False,
     hide_console: bool = True,
+    camera: int | None = None,
+    settings: dict | None = None,
+    strip_intros: bool = False,
     fetch_maps: bool = False,
     limit: int | None = None,
     image_format: str = "jpeg",
@@ -392,8 +466,8 @@ def collect(
 ) -> dict:
     """Record every replay under ``replay_root``.
 
-    ``instances`` game instances run in parallel, each on its own port and its
-    own share of the queue.  Every file they need is staged first, because the
+    ``instances`` game instances run in parallel, each on its own port, taking
+    the next map off a shared queue as they become free.  Every file they need is staged first, because the
     game only indexes its Tracks folder at startup.
     """
     started = time.monotonic()
@@ -404,7 +478,9 @@ def collect(
     paths = replays.discover_replays(replay_root)
     if limit is not None:
         paths = paths[:limit]
-    prepared = plan(paths, layout=layout, fetch_maps=fetch_maps)
+    prepared = plan(
+        paths, layout=layout, fetch_maps=fetch_maps, strip_intros=strip_intros
+    )
 
     jobs = prepared.jobs
     resumed = 0
@@ -414,24 +490,29 @@ def collect(
         jobs = keep
 
     instances = max(1, min(instances, len(jobs))) if jobs else 0
+    # Released only when the whole queue is drained, so no window closes while
+    # another instance is still recording.
+    all_done = threading.Barrier(instances) if instances > 1 else None
     results: list[JobResult] = []
     threads: list[threading.Thread] = []
-    shard_results: list[list[JobResult]] = []
+    per_instance: list[list[JobResult]] = []
     failures: list[str] = []
 
+    pending: queue.Queue = queue.Queue()
+    for job in jobs:
+        pending.put(job)
+
     for index in range(instances):
-        shard = jobs[index::instances]  # round robin, so lengths stay even
         collected: list[JobResult] = []
-        shard_results.append(collected)
+        per_instance.append(collected)
 
         def target(
-            shard: list[Job] = shard,
             collected: list[JobResult] = collected,
             index: int = index,
         ) -> None:
             try:
                 _worker(
-                    shard,
+                    pending,
                     out_root,
                     instance_id=index,
                     port=port + index,
@@ -444,10 +525,13 @@ def collect(
                     hide_ui=hide_ui,
                     unfocused_fps_limit=unfocused_fps_limit,
                     hide_console=hide_console,
+                    camera=camera,
                     image_format=image_format,
                     quality=quality,
                     retries=retries,
                     capture_log=capture_log,
+                    all_done=all_done,
+                    failures=failures,
                     results=collected,
                     progress=progress,
                 )
@@ -463,7 +547,7 @@ def collect(
 
     for thread in threads:
         thread.join()
-    for collected in shard_results:
+    for collected in per_instance:
         results.extend(collected)
 
     summary = {
@@ -483,6 +567,9 @@ def collect(
             status: sum(1 for r in results if r.status == status)
             for status in sorted({r.status for r in results})
         },
+        # What this dataset was actually produced with, so it does not depend on
+        # what the config file happened to say on the day.
+        "settings": settings or {},
         "instance_failures": failures,
         "skipped": prepared.skipped,
         "seconds": round(time.monotonic() - started, 1),

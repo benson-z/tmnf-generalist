@@ -8,6 +8,14 @@ on the start line for the whole run.
 The game takes a ``/userdir=<path>`` switch, so each instance gets its own copy
 of the small, mutable parts (Profiles, Config) and shares the big read-only
 part (Tracks) through a junction.
+
+``Config`` and ``Profiles`` are mirrored from the real user directory on every
+start, not copied once. That makes ``Documents/TmForever`` the single place to
+change a setting -- graphics detail, resolution, keybinds, camera -- and every
+instance picks it up next launch. Copying once was measured to go wrong: the
+instances ran for days on graphics settings that had been changed in the
+launcher, because the change never reached their copies, and a benchmark of
+"minimum settings" quietly measured the old ones.
 """
 
 from __future__ import annotations
@@ -20,8 +28,10 @@ import yaml
 
 from .paths import Layout
 
-# Copied per instance: small, and the state instances fight over.
-PRIVATE_DIRS = ("Profiles", "Config", "Scores")
+# Mirrored from the master on every start: the settings a person edits.
+SYNCED_DIRS = ("Profiles", "Config")
+# Copied once: per-instance state nobody edits by hand.
+PRIVATE_DIRS = ("Scores",)
 # Shared read-only: this is where staged maps and replays live.
 SHARED_DIRS = ("Tracks",)
 
@@ -66,6 +76,13 @@ def prepare(layout: Layout, instance_id: int, *, refresh: bool = False) -> Path:
     if refresh and target.exists():
         shutil.rmtree(target, ignore_errors=True)
     target.mkdir(parents=True, exist_ok=True)
+
+    for name in SYNCED_DIRS:
+        source = layout.user_dir / name
+        if source.is_dir():
+            # Overwrites whatever the game wrote on its last exit, which is the
+            # point: an instance should look like the master, not drift.
+            shutil.copytree(source, target / name, dirs_exist_ok=True)
 
     for name in PRIVATE_DIRS:
         source = layout.user_dir / name

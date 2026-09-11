@@ -81,11 +81,28 @@ uv run tmnf-collect launch          # start one instance, already logged in
 uv run tmnf-collect smoke           # launch, drive a fixed script, save frames
 uv run tmnf-collect camera-check    # measure what forced rendering does
 uv run tmnf-collect verify <dir>    # check a recorded dataset on disk
+uv run tmnf-collect clean <dir>     # move failed runs out of a dataset
+uv run tmnf-collect stats <dir>     # graph run lengths and map tags
 uv run tmnf-collect video <run>     # replay one run as annotated video
 uv run tmnf-collect harvest         # pick maps on TMX and fetch demos
 uv run tmnf-collect filter <dir>    # sort replays by input device
 uv run tmnf-collect kill            # stop every running instance
 ```
+
+## Settings
+
+`tmnf-collect.yaml` in the working directory sets defaults for every command, so
+a collection run is one line again:
+
+```bash
+uv run tmnf-collect collect testdata/corpus --out out/corpus
+```
+
+Flags still win over the file, `--config path.yaml` reads another one, and an
+unknown key or command section is an error rather than a shrug -- a typo that
+silently does nothing is the failure the file exists to prevent. Every run
+records what it actually used in `meta.json`, so a dataset does not depend on
+what the file happened to say that day.
 
 Record every replay in a folder:
 
@@ -107,9 +124,18 @@ replay always match and there is no UID search:
 
 ```bash
 uv run tmnf-collect harvest --limit 200 --out testdata/corpus --dry-run
-uv run tmnf-collect harvest --limit 200 --out testdata/corpus
+uv run tmnf-collect harvest --limit 200 --out testdata/corpus     --exclude-tags LOL,PressForward,RPG,Trial,Maze
 uv run tmnf-collect collect testdata/corpus --out out/corpus --instances 3
 ```
+
+`--tags` keeps only maps carrying one of the tags named, `--exclude-tags` drops
+maps carrying any of them; both take names or ids, and the harvest summary
+reports what it picked by tag, with the gameplay seconds each tag will cost to
+record (`--dry-run` gives that budget without downloading anything). Neither filters by default, because the tag says
+less than it looks: well-awarded maps predate TMX's multi-tag support and carry
+exactly one tag each, and for about half of them that tag is the catch-all
+`Race`. What the filters are good for is keeping the genuinely unhelpful
+categories out -- a LOL or PressForward map teaches nothing about racing.
 
 Maps are ordered by **award count**, which is the only real quality signal TMX
 exposes and filters out broken and troll maps cheaply. `--min-seconds` /
@@ -194,6 +220,36 @@ over: a finish time that does not match the replay, a first sample that is not
 at race time 0, a gap other than 50 ms, non-contiguous row indices, rows
 pointing at frames that are not there, or a frame drawn before its own tick.
 
+Anything that fails is still on disk, and training reads whatever directories
+are there, so take the failures out before using the dataset:
+
+```bash
+uv run tmnf-collect clean out/dataset --dry-run   # say what would go
+uv run tmnf-collect clean out/dataset
+```
+
+Failed runs move to a sibling `out/dataset.rejected/<status>/` rather than being
+deleted -- a desync is worth keeping to look at, and `--delete` is there if it
+is not. Clearing them also matters before re-collecting: a run directory is
+reused and its frames are numbered, so a shorter second attempt would otherwise
+leave the tail of the first one behind.
+
+Then look at what the corpus is made of:
+
+```bash
+uv run tmnf-collect stats out/dataset
+uv run tmnf-collect stats out/dataset --bin 5 --png out/lengths.png
+```
+
+Total hours is the number everyone quotes and it hides the shape that matters.
+`stats` draws the run-length histogram with its median and quartiles, and
+breaks the corpus down by TMX map tag, in runs and in recorded time -- a corpus
+that is a third LOL and PressForward maps is time spent learning something other
+than racing. The tag bars are drawn from time rather than run count, since time
+is what a tag costs and what the training set is made of. Tags are
+not recorded in a run, so they are fetched from TMX once and cached in
+`tags.json` beside the dataset; `--no-tags` skips the lookup entirely.
+
 To check the frames and the labels are actually in step, watch one run back
 with its telemetry drawn on:
 
@@ -207,7 +263,8 @@ still be shifted against the pictures; this is the check that catches that.
 Needs `ffmpeg` on PATH.
 
 Each replay becomes `out/dataset/<replay name>/` holding `frames/NNNNNN.jpg`,
-`samples.jsonl` (one row per frame) and `meta.json` (what was expected, what
+`samples.jsonl` (one row per frame), `inputs.jsonl` (one row per 10 ms physics
+tick) and `meta.json` (what was expected, what
 was recorded, and whether they agree). `index.json` at the top lists every
 replay, its status, and why anything was skipped. Add `--log` to also save the
 in-game TMInterface console to `gamelog.txt`, which is the fastest way to see
@@ -246,6 +303,37 @@ right controller socket.
 TMLoader passes that whole string to the game as one quoted argument, so the
 game's own switches (`/file=`, and anything else) cannot be smuggled in this
 way; the plugin scans the joined command line instead of matching argv entries.
+
+## Inputs are recorded at 100 Hz, frames at 20 Hz
+
+The simulation steps every 10 ms and `inputs.jsonl` keeps every step: keys,
+resolved gas/brake/steer, and speed. Frames stay at 20 Hz because they are what
+costs disk and GPU.
+
+This is not just finer labels. Measured on two maps, **74-84% of keyboard
+transitions land between 20 Hz sample points**, so a frame-rate label stream
+either loses a tap or attributes it to the wrong moment -- and TMNF keyboard
+driving is largely short counter-steer taps. `verify` checks the stream is
+continuous at 10 ms, starts at 0, reaches the finish, and agrees with the 20 Hz
+rows wherever the two coincide.
+
+## Map intros are removed from the map, not skipped in the game
+
+The intro flythrough averaged 20 s a map against 41 s of actual driving, and
+some intros never end without a keypress at all, which would strand those maps.
+Nothing in the game skips it from outside: TMInterface's `press` injects into
+the race input system, which does not exist during an intro (it logs "you are
+currently not in a race", then "Respawn at invalids"), `PostMessage` and
+`AttachThreadInput` never reach a DirectInput game, and `set speed` does not
+apply to intros. A real keystroke works but only reaches the foreground window,
+which cannot survive parallel instances.
+
+So the clips come out of the staged copy of the map instead --
+`mediatracker.py`, on by default, `--keep-intros` to opt out. The map keeps its
+UID and its blocks, so it is still the map its replay was driven on. Checked on
+465 maps: all stripped, all UIDs preserved, 27.6 MB of MediaTracker removed, one
+map being 959 KB of intro out of 981 KB. It also removes the in-race clips that
+would otherwise hijack the chase camera mid-run.
 
 ## Timing quirks worth knowing
 

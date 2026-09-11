@@ -7,6 +7,7 @@ are not lined up, however good the numbers look.
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import subprocess
@@ -67,6 +68,12 @@ def _key_box(
         fill=text_colour,
         anchor="mm",
     )
+
+
+def _frame_at(blob, row: dict) -> io.BytesIO:
+    """Pull one frame out of the run's single frames file."""
+    blob.seek(row["frame_offset"])
+    return io.BytesIO(blob.read(row["frame_bytes"]))
 
 
 def render_frame(
@@ -176,7 +183,8 @@ def render_run(
     if not rows:
         raise RuntimeError(f"{run_dir} has no samples")
 
-    first = Image.open(run_dir / rows[0]["frame"])
+    blob = (run_dir / "frames.bin").open("rb")
+    first = Image.open(_frame_at(blob, rows[0]))
     size = (first.width * scale, first.height * scale + panel)
 
     command = [
@@ -201,12 +209,13 @@ def render_run(
     assert process.stdin is not None
     try:
         for row in rows:
-            with Image.open(run_dir / row["frame"]) as image:
+            with Image.open(_frame_at(blob, row)) as image:
                 frame = render_frame(
                     image.convert("RGB"), row, scale=scale, panel=panel
                 )
             process.stdin.write(frame.tobytes())
     finally:
+        blob.close()
         process.stdin.close()
         code = process.wait()
     if code != 0:

@@ -45,6 +45,72 @@ ORDER_AWARDS_DESC = 6
 TRACK_FIELDS = "TrackId,TrackName,Authors,AuthorTime,Awards,Tags,Difficulty"
 REPLAY_FIELDS = "ReplayId,ReplayTime,User.Name"
 
+# The API returns tags as bare ids and serves no table for them, but the site's
+# own front end carries one: `enumTrackTagDesc` in /js/meta.js, which this list
+# matches entry for entry. The ids are indices into that array, so 0 is the tag
+# "Race" and not an absent tag -- a map with no tag comes back with an empty
+# list. Race is also the catch-all most maps carry, so it says little on its own.
+# Ids the site adds later render as "tag-<n>" rather than a guess.
+TAG_NAMES = {
+    0: "Race",
+    1: "Stunt",
+    2: "Maze",
+    3: "Offroad",
+    4: "Multilap",
+    5: "FullSpeed",
+    6: "LOL",
+    7: "Tech",
+    8: "SpeedTech",
+    9: "RPG",
+    10: "PressForward",
+    11: "Trial",
+    12: "Grass",
+    13: "Story",
+    14: "Nascar",
+    15: "Speedfun",
+    16: "Endurance",
+    17: "Altered Nadeo",
+    18: "Transitional",
+}
+
+
+def tag_name(tag_id: int) -> str:
+    return TAG_NAMES.get(tag_id, f"tag-{tag_id}")
+
+
+def tag_names(tags: tuple[int, ...]) -> str:
+    return ", ".join(tag_name(tag) for tag in tags) if tags else "untagged"
+
+
+def parse_tags(text: str) -> tuple[int, ...]:
+    """Turn ``"LOL,PressForward"`` or ``"6,10"`` into tag ids.
+
+    Names are matched case-insensitively and ignoring spaces and underscores,
+    because the site itself spells one of them both ways.
+    """
+    if not text:
+        return ()
+    lookup = {
+        name.lower().replace(" ", "").replace("_", ""): tag_id
+        for tag_id, name in TAG_NAMES.items()
+    }
+    found: list[int] = []
+    for part in text.split(","):
+        word = part.strip()
+        if not word:
+            continue
+        if word.isdigit():
+            found.append(int(word))
+            continue
+        key = word.lower().replace(" ", "").replace("_", "")
+        if key not in lookup:
+            raise TmxError(
+                f"unknown tag {word!r}; known tags are "
+                + ", ".join(TAG_NAMES[i] for i in sorted(TAG_NAMES))
+            )
+        found.append(lookup[key])
+    return tuple(dict.fromkeys(found))
+
 
 class TmxError(RuntimeError):
     pass
@@ -126,6 +192,7 @@ def search_tracks(
     min_author_time: int | None = None,
     max_author_time: int | None = None,
     min_awards: int = 0,
+    include_tags: tuple[int, ...] = (),
     exclude_tags: tuple[int, ...] = (),
 ) -> list[TmxTrack]:
     """Maps ordered by award count, best first.
@@ -133,6 +200,12 @@ def search_tracks(
     ``min_awards`` is applied here rather than by the API, which ignores an
     awards filter; because the ordering is awards-descending, dropping below the
     threshold means every later page is below it too, so the walk can stop.
+
+    Tags are filtered here too -- the API takes no tag parameter, and the one it
+    appears to take is ignored. A map matches ``include_tags`` if it carries any
+    of them, and is dropped if it carries any of ``exclude_tags``. Well-awarded
+    maps predate TMX's multi-tag support and carry exactly one tag each, so in
+    practice the two are simple opposites.
     """
     found: list[TmxTrack] = []
     after: int | None = None
@@ -161,6 +234,8 @@ def search_tracks(
                 return found  # ordering guarantees nothing better follows
             if exclude_tags and set(track.tags) & set(exclude_tags):
                 continue
+            if include_tags and not set(track.tags) & set(include_tags):
+                continue
             found.append(track)
             if len(found) >= limit:
                 break
@@ -177,6 +252,29 @@ def find_by_uid(map_uid: str) -> TmxTrack | None:
     query = urllib.parse.urlencode({"fields": TRACK_FIELDS, "uid": map_uid})
     results = _get_json(f"{TRACKS_API}?{query}").get("Results") or []
     return _track_from(results[0]) if results else None
+
+
+def track_tags(
+    track_ids: list[int], *, batch: int = 50
+) -> dict[int, tuple[int, ...]]:
+    """Tag ids for many tracks at once.
+
+    The ``id`` filter takes a comma-separated list, so a corpus of a few hundred
+    maps costs a handful of requests rather than one each.
+    """
+    found: dict[int, tuple[int, ...]] = {}
+    for start in range(0, len(track_ids), batch):
+        chunk = track_ids[start : start + batch]
+        query = urllib.parse.urlencode(
+            {
+                "fields": "TrackId,Tags",
+                "count": len(chunk),
+                "id": ",".join(str(i) for i in chunk),
+            }
+        )
+        for row in _get_json(f"{TRACKS_API}?{query}").get("Results") or []:
+            found[int(row["TrackId"])] = tuple(row.get("Tags") or ())
+    return found
 
 
 def track_replays(track_id: int, *, limit: int = PAGE) -> list[TmxReplay]:
@@ -310,6 +408,7 @@ def harvest(
     min_author_time: int | None = None,
     max_author_time: int | None = None,
     min_awards: int = 0,
+    include_tags: tuple[int, ...] = (),
     exclude_tags: tuple[int, ...] = (),
     prefer: str = "median",
     dry_run: bool = False,
@@ -323,6 +422,7 @@ def harvest(
         min_author_time=min_author_time,
         max_author_time=max_author_time,
         min_awards=min_awards,
+        include_tags=include_tags,
         exclude_tags=exclude_tags,
     )
     result.tracks_considered = len(tracks)

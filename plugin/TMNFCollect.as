@@ -10,7 +10,7 @@
 //
 // Everything on the wire is little-endian.
 
-const uint PROTO_VERSION = 3;
+const uint PROTO_VERSION = 5;
 
 // plugin -> controller
 const uint8 MSG_HELLO = 0x01;
@@ -18,6 +18,8 @@ const uint8 MSG_SAMPLE = 0x02;
 const uint8 MSG_EVENT = 0x03;
 const uint8 MSG_LOG = 0x04;
 const uint8 MSG_PONG = 0x05;
+// One per physics tick: inputs at 100Hz, without a frame attached.
+const uint8 MSG_TICK = 0x06;
 
 // controller -> plugin
 const uint8 CMD_COMMAND = 0x10;
@@ -31,6 +33,10 @@ const uint8 EV_CHECKPOINT = 2;
 const uint8 EV_FINISH = 3;
 const uint8 EV_GAMESTATE = 4;
 const uint8 EV_RUN_RESET = 5;
+// The countdown is ticking: the simulation exists but race time is still
+// negative. Nothing is sent during the intro flythrough before it, so this is
+// the controller's only notice that the intro is over.
+const uint8 EV_PRERACE = 6;
 
 Net::Socket@ g_sock = null;
 bool g_connected = false;
@@ -55,6 +61,7 @@ uint g_dropped = 0;      // ticks whose frame never got rendered
 int g_lastTickTime = 0;  // most recently simulated tick, for alignment
 int g_lastSampleTime = -1000000;
 int g_prevRaceTime = -1000000;
+int g_lastPreTick = -1000000;  // last countdown tick reported, race time ms
 bool g_prevFinished = false;
 
 // Telemetry for the sample Render() is about to capture.
@@ -276,6 +283,31 @@ void SendEvent(uint8 kind, int raceTime, int arg)
     g_sock.Write(arg);
 }
 
+// Inputs change far faster than 20Hz: a keyboard tap can be a single 10ms tick,
+// which the sampled stream either misses or lands on the wrong frame. Ticks are
+// sent for every step of the simulation and carry no image, so a whole run of
+// them costs less than one frame.
+void SendTick(SimulationManager@ sim, int raceTime)
+{
+    if (!g_connected) return;
+    InputState inputs = sim.GetInputState();
+
+    uint8 keys = 0;
+    if (inputs.Up) keys |= 1;
+    if (inputs.Down) keys |= 2;
+    if (inputs.Left) keys |= 4;
+    if (inputs.Right) keys |= 8;
+
+    // Two writes, not eight. Every failed write disconnects the plugin for
+    // good, so the fewer of them per tick the better -- and at 100Hz this runs
+    // 800 times a second per instance if it is not kept lean. The analog
+    // values and speed are in the 20Hz samples already; what is only available
+    // here is which keys were down.
+    if (!g_sock.Write(MSG_TICK)) { Fail("tick"); return; }
+    g_sock.Write(raceTime);
+    g_sock.Write(keys);
+}
+
 void SendPendingSample(array<uint8>@ pixels, int width, int height)
 {
     if (!g_connected) return;
@@ -378,6 +410,16 @@ void OnRunStep(SimulationManager@ sim)
         SendEvent(EV_RUN_START, raceTime, 0);
         ApplyRaceInterface();
     }
+    // Report the countdown as it runs, rate limited in race time. The first of
+    // these is what tells the controller the intro has finished playing.
+    if (raceTime < 0) {
+        if (raceTime < g_lastPreTick || raceTime - g_lastPreTick >= 100) {
+            g_lastPreTick = raceTime;
+            SendEvent(EV_PRERACE, raceTime, 0);
+        }
+    } else {
+        g_lastPreTick = -1000000;
+    }
     g_prevRaceTime = raceTime;
 
     bool finished = sim.PlayerInfo.RaceFinished;
@@ -387,6 +429,10 @@ void OnRunStep(SimulationManager@ sim)
     g_prevFinished = finished;
 
     if (!g_collecting || raceTime < 0) return;
+
+    // Every tick carries inputs; only every g_periodMs-th one carries a frame.
+    SendTick(sim, raceTime);
+
     if (raceTime % g_periodMs != 0) return;
     if (raceTime == g_lastSampleTime) return;
     g_lastSampleTime = raceTime;

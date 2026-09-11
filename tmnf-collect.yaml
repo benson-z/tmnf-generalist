@@ -1,0 +1,76 @@
+# Defaults for tmnf-collect, picked up automatically from the working
+# directory. Anything given on the command line still wins, so this sets the
+# normal case rather than locking it in. `--config path.yaml` reads another.
+#
+# Every value here is measured rather than guessed; the notes say what by.
+
+collect:
+  # 6 is the ceiling on this machine: 36/36 with zero dropped sample points at
+  # 3.3-3.8x real time, against 2.8x for 4. 9 loses runs however the writer is
+  # tuned -- instances are threads in one process, and nine readers moving
+  # 300KB of pixels per sample past one GIL is the wall. Going higher needs a
+  # process per instance, not a faster writer.
+  instances: 6
+
+  # Chase camera, further back and higher than cam 2 (7.37 m vs 6.24 m behind,
+  # 3.29 m vs 1.70 m above). Whatever is chosen has to be used at RL time too,
+  # or the encoder meets a different-looking world when fine-tuning starts.
+  camera: 1
+
+  # 320x240 out of a 640x480 render: a clean 2:1 downscale. Always downscale
+  # further at training time, never up.
+  width: 320
+  height: 240
+
+  # 20 Hz frames. Inputs are recorded at 100 Hz regardless, into inputs.jsonl,
+  # because 74-84% of keyboard transitions fall between 20 Hz sample points.
+  period: 50
+
+  # The game HUD is not part of the world and would teach the model to read a
+  # speedometer instead of the road.
+  show_ui: false
+
+  # Game speed-up is measured to be actively harmful without forced rendering:
+  # 1.5x lost 10 of 36 runs, 2.0x lost 25.
+  speed: 1.0
+  force_render: false
+
+  # Leaving the FPS throttle off. Capping it was measured slower (495s vs 449s)
+  # and slightly worse, because the cap falls below what 20 Hz sampling needs.
+  fps_limit: false
+
+  # MediaTracker clips are stripped from the staged copy of each map. Worth
+  # about 20s a map, and some intros never end at all without a keypress, which
+  # cannot be delivered to a background instance. This also removes the in-race
+  # clips that hijack the camera mid-run.
+  keep_intros: false
+
+  # JPEG 4:2:0 at q80. 4:4:4 cost 1.16ms a frame against 0.50ms for chroma
+  # detail that does not survive downscaling to a training resolution.
+  quality: 80
+  format: jpeg
+
+harvest:
+  # Only about half of harvested replays are keyboard, and roughly a tenth will
+  # not reproduce, so over-harvest against the number of runs actually wanted.
+  limit: 400
+  min_awards: 5
+  min_seconds: 25.0
+  max_seconds: 75.0
+
+  # Median of the credible leaderboard: author validation laps are frequently
+  # far too slow to imitate, records are edge-of-control and near identical.
+  prefer: median
+
+  # These teach nothing about racing. Well-awarded maps predate TMX's multi-tag
+  # support and carry exactly one tag each, so excluding is unambiguous.
+  exclude_tags: LOL,PressForward,RPG,Trial,Maze
+
+filter:
+  # Keyboard is instant full lock, a pad emits continuous values; mixed, the
+  # same corner carries contradictory labels.
+  inputs: keyboard
+
+  # Recording cost is linear in race time while the learning signal is roughly
+  # per corner.
+  max_seconds: 180.0
