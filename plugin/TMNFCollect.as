@@ -4,10 +4,9 @@
 // Sampling is clocked on physics ticks (OnRunStep runs once per 10 ms of race
 // time) rather than on rendered frames. Screenshots are only legal inside
 // Render(), so a sample point in OnRunStep stashes the tick's telemetry and
-// the game's next natural Render() captures it. A sample point the game never
-// draws is counted as dropped, and a run with any dropped points is rejected:
-// forcing an extra render instead was measured to move the chase camera by a
-// metre, and the game only draws often enough to keep up at 1x.
+// the game's next natural Render() captures it. Above 1x, a sample state is
+// held until that callback, then simulation resumes. This keeps the regular
+// camera/render path while physics runs quickly between samples.
 //
 // Everything on the wire is little-endian.
 
@@ -58,6 +57,13 @@ bool g_prevFinished = false;
 
 // Telemetry for the sample Render() is about to capture.
 bool g_pending = false;
+// Above 1x, several physics ticks can run inside one game-loop iteration. At a
+// sample tick, hold this exact state until the next regular Render() callback.
+// The frame is therefore natural (including its camera update), but simulation
+// is free to run quickly between sample points.
+bool g_frameBarrier = false;
+bool g_frameHeld = false;
+SimulationState@ g_frameState = null;
 int p_raceTime = 0;
 uint p_displaySpeed = 0;
 float p_velX = 0, p_velY = 0, p_velZ = 0;
@@ -93,6 +99,7 @@ void Main()
 
 void OnDisabled()
 {
+    if (g_frameHeld) GetSimulationManager().Running = true;
     Disconnect();
 }
 
@@ -246,6 +253,8 @@ void ApplyConfigEntry(const string&in entry)
         g_capW = int(Text::ParseInt(value));
     } else if (key == "height") {
         g_capH = int(Text::ParseInt(value));
+    } else if (key == "frame_barrier") {
+        g_frameBarrier = (value == "1");
     } else if (key == "hide_ui") {
         g_hideUi = (value == "1");
         ApplyRaceInterface();
@@ -382,6 +391,20 @@ void StashTelemetry(SimulationManager@ sim, int raceTime)
 
 void OnRunStep(SimulationManager@ sim)
 {
+    if (g_frameHeld && g_pending && g_frameState !is null) {
+        // Console commands may already have fired for the queued next tick.
+        // Rewinding physics must not undo a release that the command scheduler
+        // will not issue twice.
+        InputState nextInputs = sim.GetInputState();
+        sim.RewindToState(g_frameState, false);
+        sim.SetInputState(InputType::Gas, nextInputs.Gas);
+        sim.SetInputState(InputType::Steer, nextInputs.Steer);
+        sim.SetInputState(InputType::Up, nextInputs.Up ? 1 : 0);
+        sim.SetInputState(InputType::Down, nextInputs.Down ? 1 : 0);
+        sim.SetInputState(InputType::Left, nextInputs.Left ? 1 : 0);
+        sim.SetInputState(InputType::Right, nextInputs.Right ? 1 : 0);
+        return;
+    }
     if (!EnsureConnected()) return;
 
     int raceTime = sim.RaceTime;
@@ -406,7 +429,6 @@ void OnRunStep(SimulationManager@ sim)
     g_prevFinished = finished;
 
     if (!g_collecting || raceTime < 0) return;
-
     // Every tick carries inputs; only every g_periodMs-th one carries a frame.
     SendTick(sim, raceTime);
 
@@ -420,6 +442,11 @@ void OnRunStep(SimulationManager@ sim)
 
     StashTelemetry(sim, raceTime);
     g_pending = true;
+    if (g_frameBarrier) {
+        @g_frameState = sim.SaveState();
+        sim.Running = false;
+        g_frameHeld = true;
+    }
 }
 
 int g_lastCpCount = -1;
@@ -443,6 +470,11 @@ void OnGameStateChanged(TM::GameState state)
 
 void Render()
 {
+    if (g_frameHeld) {
+        GetSimulationManager().Running = true;
+        g_frameHeld = false;
+        @g_frameState = null;
+    }
     // Render() is the only callback that keeps running in the menus, so this is
     // where the connection gets (re-)established between races.
     if (!EnsureConnected()) return;
@@ -451,6 +483,14 @@ void Render()
     if (!g_pending) return;
     g_pending = false;
     if (!g_connected) return;
+
+    TM::GameCamera@ shotCamera = GetCurrentCamera();
+    if (shotCamera !is null) {
+        vec3 shotPos = shotCamera.Location.Position;
+        p_camX = shotPos.x; p_camY = shotPos.y; p_camZ = shotPos.z;
+        shotCamera.Location.Rotation.GetYawPitchRoll(p_camYaw, p_camPitch, p_camRoll);
+        p_camFov = shotCamera.Fov;
+    }
 
     vec2 size(float(g_capW), float(g_capH));
     array<uint8>@ pixels = Graphics::CaptureScreenshot(size);

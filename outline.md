@@ -81,8 +81,8 @@ and `video` for looking at what came out.
 - `prepare()`: fps throttle off, `autorewind` off (it rewinds a recording
   mid-flight), `execute_commands` on, `log_bot` on (the only way a wedged
   instance announces itself), load screens skipped, `countdown_speed 1` (a
-  fast countdown skips the tick carrying the first input), game speed fixed
-  at 1×, console hidden once.
+  fast countdown skips the tick carrying the first input), configurable game
+  speed from 1× to 5×, console hidden once.
 - **Map load waits for the first non-negative tick**, not just the race
   state — LocalRace is reported while the map is still loading.
 - **Camera issued per run** (`cam 1`) once the race is live, because whether
@@ -112,14 +112,13 @@ and `video` for looking at what came out.
   `race_time ≥ 0` is a 20 Hz sample point. Game time, never wall time.
 - **Capture on the game's next natural render.** `CaptureScreenshot` is only
   legal inside `Render()`, so the tick stashes telemetry and the next drawn
-  frame captures it. Each sample records both the telemetry tick and the tick
-  at render, so lag is data rather than an assumption. A pending sample the
-  game never draws increments `dropped`, and a run with any dropped points is
-  rejected.
-- **No forced rendering.** Forcing a frame from the tick moves the chase
-  camera about a metre (its follow distance is smoothed per drawn frame) and
-  does so differently at every game speed; natural 1× is the one cadence that
-  is both stable and what a human sees.
+  frame captures it. Above 1×, a barrier holds the sample state until that
+  callback and preserves input edges consumed by any queued extra tick. Each
+  sample records both times. A pending sample the game never draws increments
+  `dropped`, and a run with any dropped points is rejected.
+- **No forced rendering.** TMInterface's forced-render path explicitly resets
+  the race camera. The frame barrier uses the regular render path; measured at
+  5× it preserved exact cars, inputs, frame ticks and replay finish times.
 - **Inputs at 100 Hz**: one `MSG_TICK` per physics step carrying a 4-bit key
   mask, two socket writes — kept lean because a single failed write
   disconnects the plugin for good. 74–84% of keyboard transitions fall between
@@ -186,8 +185,10 @@ and `video` for looking at what came out.
 
 | lever | result |
 |---|---|
-| game speed above 1× | 1.5× lost 10 of 36 runs to dropped frames; frames need `20 × speed` fps per instance |
-| forced rendering | camera moves ~1 m, differently at each speed |
+| game speed above 1× without barrier | 1.5× lost 10 of 36 runs to dropped frames |
+| 5× with natural-frame barrier | 3/3 full replays exact; capture interval 4.2-4.8× real time |
+| 5× plus parallel instances | unsafe: A07 finished 20 ms late twice under two-instance contention |
+| forced rendering | camera moves ~1 m because TMInterface resets it before drawing |
 | fps throttle | slower and slightly less accurate |
 | instances | 6 is the ceiling on a 12-core / Radeon 890M machine; 9 loses runs |
 | minimum graphics settings | 78.7% → 99.6% of frames drawn on their own tick |

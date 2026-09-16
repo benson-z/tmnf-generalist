@@ -48,11 +48,11 @@ Sampling lives in an AngelScript plugin loaded by TMInterface:
   it. Each sample records both the tick its telemetry came from and the tick
   the game had reached when the frame was drawn, so any lag between the two is
   visible in the data rather than assumed to be zero.
-* The game is never asked to render on demand. Forcing a render from the tick
-  removes the lag but moves the chase camera's eye about a metre (its follow
-  distance is smoothed per drawn frame), and does so differently at every
-  game speed. Natural rendering keeps up at 1x, and a sample point the game
-  does not draw is counted as dropped and fails the run.
+* The game is never asked to render on demand. Above 1x, the plugin pauses at a
+  sample tick and holds that exact simulation state until the next regular
+  frame. If the game already queued another physics step, the plugin restores
+  the held state while preserving input transitions the script already issued.
+  `Render()` captures the frame and resumes simulation.
 * Frames (BGRA), input state and telemetry go out over a `Net::Socket` to the
   Python controller, which writes the dataset. There is no file-write API in
   the plugin sandbox, so the socket is the only way out.
@@ -275,8 +275,8 @@ why a run misbehaved.
 ```python
 from tmnf_collect.session import Session
 
-with Session(port=8477, width=320, height=240) as session:
-    session.prepare(speed=1.0)
+with Session(port=8477, width=320, height=240, speed=1.0) as session:
+    session.prepare()
     session.dump_inputs("tmnf-collect/A01-Race.Replay.Gbx", "a01.txt")
     result = session.record_map_run(
         "tmnf-collect/A01-Race.Challenge.Gbx", "a01.txt"
@@ -399,15 +399,34 @@ These all cost real debugging time and are handled in code:
       whose map was not on the machine was recorded end to end via
       `--fetch-maps`, reproducing its 43950 ms finish exactly.
 
-## Game speed stays at 1x
+## Faster collection without forced rendering
 
-Sampling is clocked on game time, so raising the speed does not change *what*
-gets recorded -- but frames need `20 x speed` draws per second of race time,
-and the game draws roughly 60-100. Measured on the 36-map set at 6 instances:
-1.5x lost 10 of 36 runs to dropped sample points, 2x lost 25. Throughput comes
-from running several instances at 1x, never from speeding one up. Every sample
-carries `render_race_time` and a running `dropped` count, so this is checkable
-in any dataset rather than having to be trusted.
+Pass `--speed 5` to run physics up to five times faster. At every 20 Hz sample
+point, the plugin pauses simulation and holds that exact state for the next
+regular frame. Physics ticks already queued in the current game-loop iteration
+are rewound, while input transitions the script issued on those ticks are
+carried forward. `Render()` captures the image and resumes simulation.
+
+```bash
+uv run tmnf-collect collect testdata/corpus --out out/fast --speed 5 --instances 1
+```
+
+Three full-replay comparisons (13.9 s, 29.1 s and 40.5 s) produced 1,673/1,673
+frames on their own tick, identical 100 Hz input records, exact car positions,
+and finish times identical to the source replays. Their capture intervals ran
+4.2-4.8x real time. Mean camera-position difference from a natural 1x reference
+was 0.13-0.30 m; the worst isolated difference was 2.82 m on a custom map. Use
+1x when matching the human-speed camera matters more than throughput. A 20x
+experiment reached 5.4-10.6x but changed one replay's finish by 20 ms, so the
+supported setting is capped at 5x. Every sample still carries
+`render_race_time` and the run still fails if any sample point is dropped.
+
+Fast mode requires one instance. Under a two-instance 5x load, a replay that
+passes alone finished 20 ms late on both attempts: contention caused queued
+ticks to cross enough barriers that save-state restoration accumulated physics
+drift. One 5x instance is already faster than the measured six-instance 1x
+aggregate (4.2-4.8x versus 3.3-3.8x), so `collect` rejects `--speed` above 1
+when `--instances` is not 1.
 
 Recording also checks that the car is actually moving, and re-arms the run if
 it is not, so a stationary run can never be written out as if it were real.
@@ -453,12 +472,12 @@ rather than barely faster. With the cause fixed there is nothing left for an
 instance relaunch to rescue, so that recovery path has been removed: a job that
 fails is reported and the queue moves on.
 
-## Why the camera is left alone
+## Why the camera stays on the natural render path
 
-Forcing a render (`Graphics::ForceGameRender()`) looked like the way to speed
-collection up: it draws a frame at every sample point whatever the game speed.
-It was measured against natural rendering on one deterministic script, with the
-car reproducing to 0.00 m so anything left is the camera:
+Forcing a render (`Graphics::ForceGameRender()`) looked like the direct way to
+speed collection up. It was measured against natural rendering on one
+deterministic script, with the car reproducing to 0.00 m so anything left is the
+camera:
 
 | comparison | camera position |
 |---|---|
@@ -467,10 +486,11 @@ car reproducing to 0.00 m so anything left is the camera:
 | natural vs forced | mean 1.04 m, max 2.15 m |
 | forced 1x vs forced 5x | mean 0.96 m |
 
-Each mode reproduces itself to a few centimetres, so the metre between them is
-systematic, not noise: the chase camera's follow distance is smoothed per drawn
-frame, and anything that changes how often the game draws moves the eye. That
-includes game speed, so forced frames are not even consistent with themselves
-across speeds. Natural rendering at 1x is the one cadence that is both stable
-and what a human sees, and the camera pose is recorded on every sample so the
-variation that remains is measurable rather than invisible.
+Read-only inspection of the installed TMInterface 2.2.1 code found the concrete
+cause: `ForceGameRender()` calls the same internal routine exposed as
+`ResetCamera()` before it draws. Skipping only that call in a reversible process
+experiment reduced the 1x error from 1.00 m to 0.07 m, confirming that this
+reset—not Windows painting or screenshot timing—causes most of the shift. The
+supported speedup therefore waits for ordinary `Render()` callbacks and does
+not patch TMInterface or request an OS repaint. The camera pose is recorded on
+every sample so the remaining variation is visible.

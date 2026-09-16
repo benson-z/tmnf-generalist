@@ -26,6 +26,12 @@ collect:
   # because 74-84% of keyboard transitions fall between 20 Hz sample points.
   period: 50
 
+  # Raise to 5 for the measured natural-frame barrier path. Three full replays
+  # retained exact ticks, inputs, car states, and finish times at 4.2-4.8x
+  # capture speed. This mode requires instances: 1. Leave at 1 for parallel
+  # collection or for the closest camera match to human-speed play.
+  speed: 1
+
   # The game HUD is not part of the world and would teach the model to read a
   # speedometer instead of the road.
   show_ui: false

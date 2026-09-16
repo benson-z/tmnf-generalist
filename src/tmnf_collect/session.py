@@ -7,6 +7,7 @@ on a chosen map.  It is the unit the replay queue hands work to.
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -84,7 +85,10 @@ class Session:
         period_ms: int = 50,
         hide_ui: bool = True,
         camera: int = 1,
+        speed: float = 1.0,
     ) -> None:
+        if not math.isfinite(speed) or not 1 <= speed <= 5:
+            raise ValueError("speed must be finite and between 1 and 5")
         self.layout = layout or detect()
         self.port = port
         self.instance_id = instance_id
@@ -93,6 +97,7 @@ class Session:
         self.period_ms = period_ms
         self.hide_ui = hide_ui
         self.camera = camera
+        self.speed = speed
 
         self.controller: Controller | None = None
         self.instance: GameInstance | None = None
@@ -135,6 +140,7 @@ class Session:
             width=self.width,
             height=self.height,
             hide_ui=self.hide_ui,
+            frame_barrier=self.speed > 1,
         )
 
     def close(self) -> None:
@@ -288,11 +294,10 @@ class Session:
             "set skip_map_load_screens true",
             "set draw_game true",
             # A sped-up countdown can skip the tick carrying the run's first
-            # input, which leaves the car parked for the whole run. Game speed
-            # stays at 1x: above it the game does not draw a frame for every
-            # sample point (1.5x lost 10 of 36 runs to dropped frames).
+            # input, which leaves the car parked for the whole run. At speeds
+            # above 1x the plugin holds each sample state for a natural frame.
             "set countdown_speed 1",
-            "set speed 1",
+            f"set speed {self.speed}",
         ):
             self._command(command)
 

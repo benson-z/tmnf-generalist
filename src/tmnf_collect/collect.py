@@ -245,6 +245,8 @@ def run_job(
                     "input_ticks": writer.ticks,
                     "tick_period_ms": 10,  # the simulation's own step
                     "camera": session.camera,
+                    "speed": session.speed,
+                    "frame_barrier": session.speed > 1,
                     "dropped_sample_points": run.dropped,
                     "arming_retries": run.restarts,
                     "driving": run.driving,
@@ -307,6 +309,7 @@ def _worker(
     hide_ui: bool,
     hide_console: bool,
     camera: int | None,
+    speed: float,
     quality: int,
     retries: int,
     capture_log: bool,
@@ -334,6 +337,7 @@ def _worker(
             period_ms=period_ms,
             hide_ui=hide_ui,
             camera=camera,
+            speed=speed,
         )
         session.start()
         session.prepare(hide_console=hide_console)
@@ -440,6 +444,7 @@ def collect(
     hide_ui: bool = True,
     hide_console: bool = True,
     camera: int | None = None,
+    speed: float = 1.0,
     budget_hours: float | None = None,
     settings: dict | None = None,
     strip_intros: bool = False,
@@ -459,6 +464,10 @@ def collect(
     the next map off a shared queue as they become free.  Every file they need is staged first, because the
     game only indexes its Tracks folder at startup.
     """
+    if not 1 <= speed <= 5:
+        raise ValueError("speed must be between 1 and 5")
+    if speed > 1 and instances != 1:
+        raise ValueError("speed above 1 requires exactly one game instance")
     started = time.monotonic()
     layout = detect()
     install.install(layout)
@@ -513,6 +522,7 @@ def collect(
                     hide_ui=hide_ui,
                     hide_console=hide_console,
                     camera=camera,
+                    speed=speed,
                     quality=quality,
                     retries=retries,
                     capture_log=capture_log,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from collections import Counter
@@ -26,6 +27,18 @@ from . import staging
 
 # Set when the parser is built; used to record what a run was configured with.
 _COLLECT_PARSER: argparse.ArgumentParser | None = None
+
+
+def _collect_speed(value: object) -> float:
+    try:
+        speed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(
+            "speed must be a number from 1 to 5"
+        ) from exc
+    if not math.isfinite(speed) or not 1 <= speed <= 5:
+        raise argparse.ArgumentTypeError("speed must be from 1 to 5")
+    return speed
 
 
 def _cmd_paths(args: argparse.Namespace) -> int:
@@ -60,6 +73,11 @@ def _cmd_install_plugin(args: argparse.Namespace) -> int:
 
 
 def _cmd_collect(args: argparse.Namespace) -> int:
+    # Config-file defaults bypass argparse's type converter.
+    args.speed = _collect_speed(args.speed)
+    if args.speed > 1 and args.instances != 1:
+        assert _COLLECT_PARSER is not None
+        _COLLECT_PARSER.error("--speed above 1 requires --instances 1")
     summary = collect_mod.collect(
         Path(args.replays),
         Path(args.out),
@@ -70,6 +88,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         hide_ui=not args.show_ui,
         hide_console=not args.show_console,
         camera=args.camera,
+        speed=args.speed,
         budget_hours=args.budget_hours,
         settings=config_mod.effective(args, _COLLECT_PARSER),
         strip_intros=not args.keep_intros,
@@ -312,6 +331,10 @@ def main(argv: list[str] | None = None) -> int:
     p_collect.add_argument("--width", type=int, default=320)
     p_collect.add_argument("--height", type=int, default=240)
     p_collect.add_argument("--period", type=int, default=50)
+    p_collect.add_argument(
+        "--speed", type=_collect_speed, default=1.0,
+        help="simulation speed from 1 to 5; above 1x, hold each sample tick for a natural frame",
+    )
     p_collect.add_argument("--limit", type=int, default=None)
     p_collect.add_argument("--quality", type=int, default=80, help="JPEG quality")
     p_collect.add_argument(
