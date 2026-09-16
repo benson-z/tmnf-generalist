@@ -388,6 +388,9 @@ These all cost real debugging time and are handled in code:
       Verified: six replays through three instances, all six
       passing first try and reproducing their exact finish times, 1.8x faster
       than one instance, plus a resume run that correctly skipped all six.
+      The natural-frame barrier later raised the measured default to eight
+      instances at 2x: 16/16 synchronized runs across two maps and 7/7
+      reproducible mixed replays passed, at about 15.8x aggregate capture speed.
 - [x] **5 - Verified on unseen replays.** Twelve fresh replays across all five
       Nations campaigns and every map type (Race, Acrobatic, Speed, Obstacle,
       Endurance), on three instances: 10 recorded and reproduced their exact
@@ -421,12 +424,23 @@ experiment reached 5.4-10.6x but changed one replay's finish by 20 ms, so the
 supported setting is capped at 5x. Every sample still carries
 `render_race_time` and the run still fails if any sample point is dropped.
 
-Fast mode requires one instance. Under a two-instance 5x load, a replay that
-passes alone finished 20 ms late on both attempts: contention caused queued
-ticks to cross enough barriers that save-state restoration accumulated physics
-drift. One 5x instance is already faster than the measured six-instance 1x
-aggregate (4.2-4.8x versus 3.3-3.8x), so `collect` rejects `--speed` above 1
-when `--instances` is not 1.
+Parallel fast mode is supported through 2x. Across A07 matrix runs, 2x passed
+with 2, 3, 4, 6, and 8 concurrent instances; an eight-instance repeat on C03
+also passed. All 31 concurrent runs had identical inputs, exact car positions,
+all expected frames, and exact finish times. Eight instances reached 15.8x
+aggregate capture speed on both maps. The production scheduler then passed all
+seven reproducible replays in an eight-map mixed run; known-bad B08 was the
+only rejection. These are now the committed defaults:
+
+```bash
+uv run tmnf-collect collect testdata/corpus --out out/parallel-fast --speed 2 --instances 8
+```
+
+Higher parallel speeds remain scheduling-sensitive. Depending on the round,
+4x through 10x could pass every instance or finish one 20 ms physics step late.
+The collector therefore requires one instance above 2x. A single-instance
+sweep also passed 6x and 10x but failed 8x, 15x, and 20x, so the supported
+single-instance maximum remains 5x.
 
 Recording also checks that the car is actually moving, and re-arms the run if
 it is not, so a stationary run can never be written out as if it were real.

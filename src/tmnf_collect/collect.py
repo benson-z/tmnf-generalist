@@ -466,8 +466,8 @@ def collect(
     """
     if not 1 <= speed <= 5:
         raise ValueError("speed must be between 1 and 5")
-    if speed > 1 and instances != 1:
-        raise ValueError("speed above 1 requires exactly one game instance")
+    if speed > 2 and instances != 1:
+        raise ValueError("speed above 2 requires exactly one game instance")
     started = time.monotonic()
     layout = detect()
     install.install(layout)

@@ -187,8 +187,10 @@ and `video` for looking at what came out.
 |---|---|
 | game speed above 1× without barrier | 1.5× lost 10 of 36 runs to dropped frames |
 | 5× with natural-frame barrier | 3/3 full replays exact; capture interval 4.2-4.8× real time |
-| 5× plus parallel instances | unsafe: A07 finished 20 ms late twice under two-instance contention |
+| 2× plus parallel instances | 31/31 exact across 2-8 instances and two maps; 8 instances reached 15.8× aggregate |
+| above 2× plus parallel instances | scheduling-sensitive 20 ms finish slips; kept single-instance only |
+| above 5× with one instance | non-monotonic: 6×/10× passed while 8×/15×/20× failed |
 | forced rendering | camera moves ~1 m because TMInterface resets it before drawing |
 | fps throttle | slower and slightly less accurate |
-| instances | 6 is the ceiling on a 12-core / Radeon 890M machine; 9 loses runs |
+| instances and speed | 8 at 2× passed 16/16 synchronized and 7/7 reproducible mixed runs; about 15.8× aggregate |
 | minimum graphics settings | 78.7% → 99.6% of frames drawn on their own tick |

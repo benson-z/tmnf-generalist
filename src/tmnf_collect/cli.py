@@ -75,9 +75,9 @@ def _cmd_install_plugin(args: argparse.Namespace) -> int:
 def _cmd_collect(args: argparse.Namespace) -> int:
     # Config-file defaults bypass argparse's type converter.
     args.speed = _collect_speed(args.speed)
-    if args.speed > 1 and args.instances != 1:
+    if args.speed > 2 and args.instances != 1:
         assert _COLLECT_PARSER is not None
-        _COLLECT_PARSER.error("--speed above 1 requires --instances 1")
+        _COLLECT_PARSER.error("--speed above 2 requires --instances 1")
     summary = collect_mod.collect(
         Path(args.replays),
         Path(args.out),
@@ -333,7 +333,10 @@ def main(argv: list[str] | None = None) -> int:
     p_collect.add_argument("--period", type=int, default=50)
     p_collect.add_argument(
         "--speed", type=_collect_speed, default=1.0,
-        help="simulation speed from 1 to 5; above 1x, hold each sample tick for a natural frame",
+        help=(
+            "simulation speed from 1 to 5; above 1x, hold each sample tick "
+            "for a natural frame; above 2x requires one instance"
+        ),
     )
     p_collect.add_argument("--limit", type=int, default=None)
     p_collect.add_argument("--quality", type=int, default=80, help="JPEG quality")

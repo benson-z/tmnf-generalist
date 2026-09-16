@@ -5,12 +5,10 @@
 # Every value here is measured rather than guessed; the notes say what by.
 
 collect:
-  # 6 is the ceiling on this machine: 36/36 with zero dropped sample points at
-  # 3.3-3.8x real time, against 2.8x for 4. 9 loses runs however the writer is
-  # tuned -- instances are threads in one process, and nine readers moving
-  # 300KB of pixels per sample past one GIL is the wall. Going higher needs a
-  # process per instance, not a faster writer.
-  instances: 6
+  # Eight instances at 2x passed 16/16 synchronized matrix runs across A07 and
+  # C03, then 7/7 reproducible replays through the normal mixed-map scheduler.
+  # That produced about 15.8x aggregate capture speed on the matrix runs.
+  instances: 8
 
   # Chase camera, further back and higher than cam 2 (7.37 m vs 6.24 m behind,
   # 3.29 m vs 1.70 m above). Whatever is chosen has to be used at RL time too,
@@ -26,11 +24,10 @@ collect:
   # because 74-84% of keyboard transitions fall between 20 Hz sample points.
   period: 50
 
-  # Raise to 5 for the measured natural-frame barrier path. Three full replays
-  # retained exact ticks, inputs, car states, and finish times at 4.2-4.8x
-  # capture speed. This mode requires instances: 1. Leave at 1 for parallel
-  # collection or for the closest camera match to human-speed play.
-  speed: 1
+  # Raise to 2 with up to 8 instances for the measured parallel barrier path
+  # (31/31 exact concurrent runs, 15.8x aggregate with 8). Speeds 3-5 require
+  # instances: 1. Leave at 1 for the closest camera match to human-speed play.
+  speed: 2
 
   # The game HUD is not part of the world and would teach the model to read a
   # speedometer instead of the road.

@@ -48,11 +48,31 @@ Render, next to screenshot capture, for all comparisons.
    replays finished 20 ms late and its input stream differed, despite every
    image reporting the intended sample tick. Production therefore accepts only
    speeds from 1 through 5.
-7. Fast mode must use one instance. With two concurrent 5x instances, A07
-   finished 20 ms late on both attempts. The input rows remained identical
-   through the original finish, but save-state restoration under contention
-   introduced sub-millimetre physics drift from 16.7 s onward, eventually
-   growing past a metre. The collector rejects this unverified combination.
+7. Parallel fast mode has a reliable 2x envelope. `speed_instance_matrix.py`
+   ran A07 at 1x through 20x with one instance and at several speeds with 2,
+   3, 4, and 6 instances. Higher speeds were scheduling-sensitive: apparently
+   successful settings failed in other rounds by one 20 ms physics step. In
+   contrast, 2x passed 31/31 concurrent runs across instance counts 2, 3, 4,
+   6, and 8, including eight A07 and eight C03 runs. Eight instances delivered
+   15.8x aggregate capture speed with identical inputs, exact car positions,
+   and exact finish times. Production permits parallel instances through 2x;
+   speeds above 2x still require one instance.
+   An end-to-end eight-replay production run then passed all seven known-good
+   replays on their first attempt. B08, which is known not to reproduce at
+   natural speed either, was correctly reported unfinished.
+8. A single instance can sometimes run well above 5x, but it is not reliable.
+   A07 passed at 6x and 10x while failing at 8x, 15x, and 20x in the same
+   sweep. The non-monotonic result points to scheduling luck rather than a safe
+   higher limit, so production remains capped at 5x.
+
+Run a matrix with:
+
+```powershell
+.venv/Scripts/python.exe experiments/speed_instance_matrix.py `
+  testdata/replays12/A07-Race.Replay.gbx `
+  --out out/speed-instance-matrix --instances 8 --speeds 2 `
+  --reference out/replay-render-probe/natural1/A07-Race.Replay
+```
 
 `render_patch.py` changes only the owned process's memory, checks the expected
 instruction (including relocated pointer), restores the original memory
