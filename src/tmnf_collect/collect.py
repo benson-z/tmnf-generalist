@@ -9,6 +9,7 @@ than quietly kept.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
@@ -298,10 +299,43 @@ RETRY_STATUSES = (
     "dropped_frames",
 )
 
+def _claim(claims: Path, job: Job) -> bool:
+    """Take ownership of one map, across processes.
+
+    Several collectors share one dataset so that the queue stays dynamic: maps
+    run from ten seconds to over a minute, and a share dealt out in advance
+    strands one collector on the long ones while the others idle. Creating the
+    claim file is the atomic step -- O_EXCL either makes it or tells us somebody
+    already has this map -- so no two instances record the same run whichever
+    process they belong to.
+    """
+    try:
+        handle = os.open(
+            claims / f"{job.output_name}.claim",
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+        )
+    except FileExistsError:
+        return False
+    except OSError:
+        return True  # cannot arbitrate; better to record twice than not at all
+    os.write(handle, str(os.getpid()).encode())
+    os.close(handle)
+    return True
+
+
+def _release(claims: Path, job: Job) -> None:
+    """Give a map back after the instance holding it died."""
+    try:
+        (claims / f"{job.output_name}.claim").unlink()
+    except OSError:
+        pass
+
+
 def _worker(
     pending: queue.Queue,
     out_root: Path,
     *,
+    claims: Path | None = None,
     instance_id: int,
     port: int,
     layout: Layout,
@@ -356,6 +390,8 @@ def _worker(
                 job = pending.get_nowait()
             except queue.Empty:
                 break
+            if claims is not None and not _claim(claims, job):
+                continue  # another collector is recording this one
             attempts = 1
             result = run_job(
                 session, job, out_root, codec=codec
@@ -379,6 +415,8 @@ def _worker(
             ):
                 if job.requeued < 1:
                     job.requeued += 1
+                    if claims is not None:
+                        _release(claims, job)
                     pending.put(job)  # a healthy instance can still record it
                 else:
                     results.append(result)
@@ -448,6 +486,7 @@ def collect(
     camera: int | None = None,
     speed: float = 1.0,
     instance_base: int = 0,
+    claims: bool = False,
     budget_hours: float | None = None,
     settings: dict | None = None,
     strip_intros: bool = False,
@@ -500,6 +539,12 @@ def collect(
     per_instance: list[list[JobResult]] = []
     failures: list[str] = []
 
+    # Shared with any other collector process writing into this dataset.
+    claims_dir: Path | None = None
+    if claims:
+        claims_dir = out_root / ".claims"
+        claims_dir.mkdir(parents=True, exist_ok=True)
+
     pending: queue.Queue = queue.Queue()
     for job in jobs:
         pending.put(job)
@@ -527,6 +572,7 @@ def collect(
                     camera=camera,
                     speed=speed,
                     codec=codec,
+                    claims=claims_dir,
                     retries=retries,
                     capture_log=capture_log,
                     all_done=all_done,

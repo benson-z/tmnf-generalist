@@ -15,6 +15,17 @@ from . import protocol
 from .protocol import Event, Hello, MessageReader, Sample
 
 
+# The plugin writes a whole frame in one call -- 307KB at 320x240 -- while
+# Windows gives a socket a 64KB receive buffer by default. That write can then
+# only succeed if this process happens to be draining the socket at that very
+# moment, and with several instances sharing one interpreter it often is not.
+# The plugin treats a failed write as fatal (Fail() disconnects it for the rest
+# of the run), so the default buffer turns an ordinary scheduling hiccup into a
+# lost run: a 36-map collection lost four instances that way. Sized to hold a
+# dozen frames, a hiccup costs nothing.
+RECEIVE_BUFFER = 4 << 20
+
+
 class Controller:
     """A listening socket that one game instance connects back to."""
 
@@ -23,6 +34,12 @@ class Controller:
         self.port = port
         self._server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Must be set before listen(): on Windows an accepted socket inherits
+        # the listener's buffer sizes, and window scaling is negotiated when
+        # the connection is established.
+        self._server.setsockopt(
+            socket.SOL_SOCKET, socket.SO_RCVBUF, RECEIVE_BUFFER
+        )
         self._server.bind((host, port))
         self._server.listen(1)
         self._conn: socket.socket | None = None
@@ -37,6 +54,7 @@ class Controller:
         conn, _ = self._server.accept()
         conn.settimeout(None)
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, RECEIVE_BUFFER)
         self._conn = conn
         self._reader = MessageReader(conn)
 

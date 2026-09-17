@@ -138,7 +138,9 @@ class MessageReader:
                 message, consumed = parsed
                 del self._buf[:consumed]
                 return message
-            chunk = self._sock.recv(65536)
+            # Large enough to lift a whole frame out in one call, so the
+            # plugin's blocked write is released as early as possible.
+            chunk = self._sock.recv(1 << 20)
             if not chunk:
                 raise ConnectionError("plugin closed the connection")
             self._buf += chunk

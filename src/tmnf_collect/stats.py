@@ -48,7 +48,9 @@ def read_runs(root: Path, *, only_ok: bool = True) -> tuple[list[Run], list[str]
     runs: list[Run] = []
     unreadable: list[str] = []
 
-    for directory in sorted(p for p in root.iterdir() if p.is_dir()):
+    for directory in sorted(
+        p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")
+    ):
         try:
             meta = json.loads(
                 (directory / "meta.json").read_text(encoding="utf-8")

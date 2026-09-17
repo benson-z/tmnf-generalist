@@ -91,6 +91,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         camera=args.camera,
         speed=args.speed,
         instance_base=args.instance_base,
+        claims=args.claims,
         budget_hours=args.budget_hours,
         settings=config_mod.effective(args, _COLLECT_PARSER),
         strip_intros=not args.keep_intros,
@@ -348,6 +349,15 @@ def main(argv: list[str] | None = None) -> int:
             "first instance id. User directories and TMLoader profiles are "
             "named from it, so two collectors running at once need disjoint "
             "id ranges as well as disjoint --port ranges"
+        ),
+    )
+    p_collect.add_argument(
+        "--claims",
+        action="store_true",
+        help=(
+            "claim each map through a lock file under the dataset, so several "
+            "collector processes can share one output directory and keep "
+            "pulling work dynamically instead of splitting it up front"
         ),
     )
     p_collect.add_argument("--limit", type=int, default=None)

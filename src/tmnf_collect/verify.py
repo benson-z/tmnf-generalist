@@ -186,7 +186,11 @@ def check_run(directory: Path, *, period_ms: int = 50) -> RunCheck:
 def check_dataset(root: Path, *, period_ms: int = 50) -> dict:
     runs = [
         check_run(d, period_ms=period_ms)
-        for d in sorted(p for p in root.iterdir() if p.is_dir())
+        # A leading dot marks bookkeeping the collector keeps beside the runs,
+        # such as the shared claim files; it is not a recorded run.
+        for d in sorted(
+            p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")
+        )
     ]
     failed = [r for r in runs if not r.ok]
     return {
