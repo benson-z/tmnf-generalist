@@ -15,10 +15,12 @@ collect:
   # or the encoder meets a different-looking world when fine-tuning starts.
   camera: 1
 
-  # 160x120 out of a 640x480 render: a clean 4:1 downscale, and the size the
-  # published TMNF RL work trains on. Frames cost a quarter of 320x240.
-  width: 160
-  height: 120
+  # 320x240 out of a 640x480 render: a clean 2:1 downscale, so every output
+  # pixel averages exactly four rendered ones with nothing resampled across
+  # block edges. Downscaling further to a training resolution stays available
+  # later; throwing the detail away at capture time does not.
+  width: 320
+  height: 240
 
   # 20 Hz frames. Inputs are recorded at 100 Hz regardless, into inputs.jsonl,
   # because 74-84% of keyboard transitions fall between 20 Hz sample points.
@@ -41,9 +43,12 @@ collect:
   # clips that hijack the camera mid-run.
   keep_intros: false
 
-  # JPEG 4:2:0 at q80. 4:4:4 cost 1.16ms a frame against 0.50ms for chroma
-  # detail that does not survive downscaling to a training resolution.
-  quality: 80
+  # Lossless. QOI packed with zstd-6: 70.0KB a frame at 3669 frames a second
+  # across eight encoder threads, against 66.9KB at 1054/s for lossless WebP
+  # and 75.9KB at 835/s for PNG. Both halves release the GIL, which is what
+  # keeps eight socket readers draining. See tmnf_collect.frames.
+  # Costs about 5.8 GB per recorded hour against 0.85 GB for JPEG q80.
+  frame_codec: qoi-zstd
 
 harvest:
   # Only about half of harvested replays are keyboard, and roughly a tenth will

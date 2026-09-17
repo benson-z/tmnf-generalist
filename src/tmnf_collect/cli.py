@@ -23,6 +23,7 @@ from . import (
     video,
 )
 from .paths import detect
+from . import frames as frames_mod
 from . import staging
 
 # Set when the parser is built; used to record what a run was configured with.
@@ -94,7 +95,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         strip_intros=not args.keep_intros,
         fetch_maps=args.fetch_maps,
         limit=args.limit,
-        quality=args.quality,
+        codec=args.frame_codec,
         capture_log=args.log,
         instances=args.instances,
         resume=not args.no_resume,
@@ -339,7 +340,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     p_collect.add_argument("--limit", type=int, default=None)
-    p_collect.add_argument("--quality", type=int, default=80, help="JPEG quality")
+    p_collect.add_argument(
+        "--frame-codec",
+        default=frames_mod.LOSSLESS,
+        choices=[frames_mod.LOSSLESS],
+        help="how frames are stored on disk; see tmnf_collect.frames",
+    )
     p_collect.add_argument(
         "--instances",
         type=int,

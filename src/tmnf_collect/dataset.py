@@ -11,7 +11,8 @@ blocks the reader, the plugin's writes back up and fail, and a single failed
 write disconnects that instance for the rest of the run. Measured at nine
 instances, that cost five of thirty-six runs. So both queues are unbounded and
 the backlog is bounded by the encoder keeping up on average, which it does:
-encoding is 0.4ms against a 50ms sample period.
+encoding a 320x240 frame losslessly is 1.7ms against a 25ms sample period at
+2x, and the codec releases the GIL so the readers keep draining meanwhile.
 
 Frames go into one file per run rather than one file each. Appending to an open
 file measured 0.067ms a frame against 0.647ms for a new small file, and a
@@ -22,15 +23,13 @@ length of each frame in `frames.bin`.
 
 from __future__ import annotations
 
-import io
 import json
 import queue
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image
-
+from .frames import LOSSLESS, Encoder
 from .protocol import Sample, Tick
 
 
@@ -114,10 +113,11 @@ class RunWriter:
     """Writes one run's frames and records; use as a context manager."""
 
     def __init__(
-        self, root: Path, *, quality: int = 80
+        self, root: Path, *, codec: str = LOSSLESS
     ) -> None:
         self.paths = RunPaths.under(root)
-        self.quality = quality
+        self.codec = codec
+        self._encoder = Encoder(codec)
         self.written = 0
         self.ticks = 0
         self.resets = 0
@@ -140,21 +140,6 @@ class RunWriter:
         )
         self._tick_worker.start()
 
-    def _encode(self, sample: Sample) -> bytes:
-        image = Image.frombytes(
-            "RGBA",
-            (sample.width, sample.height),
-            sample.pixels,
-            "raw",
-            "BGRA",
-        ).convert("RGB")
-        buffer = io.BytesIO()
-        # JPEG 4:2:0. Measured per frame: 0.50ms against 1.16ms for 4:4:4, at
-        # less than half the size, for chroma detail that does not survive
-        # downscaling to a training resolution; PNG was 13.6ms, WebP 35ms.
-        image.save(buffer, "JPEG", quality=self.quality, subsampling=2)
-        return buffer.getvalue()
-
     def _run(self) -> None:
         while True:
             item = self._queue.get()
@@ -165,7 +150,9 @@ class RunWriter:
                     self._discard_everything()
                     continue
                 _, index, sample = item
-                payload = self._encode(sample)
+                payload = self._encoder.encode(
+                    sample.pixels, sample.width, sample.height
+                )
                 offset = self._frames.tell()
                 self._frames.write(payload)
                 self._records.write(

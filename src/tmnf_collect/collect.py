@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import install, replays, staging, tmx
 from .dataset import RunWriter
+from .frames import LOSSLESS
 from .paths import Layout, detect
 from .replays import ChallengeIndex, ReplayError, ReplayInfo
 from .session import NoInputsError, Session, SessionError
@@ -151,7 +152,7 @@ def run_job(
     job: Job,
     out_root: Path,
     *,
-    quality: int = 80,
+    codec: str = LOSSLESS,
     timeout: float = 600.0,
 ) -> JobResult:
     """Record one replay on an already-running instance."""
@@ -175,7 +176,7 @@ def run_job(
 
         with RunWriter(
             out_root / job.output_name,
-            quality=quality,
+            codec=codec,
         ) as writer:
             run = session.record_map_run(
                 job.staged_challenge,
@@ -254,6 +255,7 @@ def run_job(
                     "clean_start": run.clean_start,
                     "period_ms": session.period_ms,
                     "frame_size": [session.width, session.height],
+                    "frame_codec": codec,
                     "hide_ui": session.hide_ui,
                 }
             )
@@ -310,7 +312,7 @@ def _worker(
     hide_console: bool,
     camera: int | None,
     speed: float,
-    quality: int,
+    codec: str,
     retries: int,
     capture_log: bool,
     all_done: threading.Barrier | None,
@@ -356,7 +358,7 @@ def _worker(
                 break
             attempts = 1
             result = run_job(
-                session, job, out_root, quality=quality
+                session, job, out_root, codec=codec
             )
             if result.status in RETRY_STATUSES and retries:
                 attempts += 1
@@ -364,7 +366,7 @@ def _worker(
                     session,
                     job,
                     out_root,
-                    quality=quality,
+                    codec=codec,
                 )
             result.attempts = attempts
             result.instance = instance_id
@@ -450,7 +452,7 @@ def collect(
     strip_intros: bool = False,
     fetch_maps: bool = False,
     limit: int | None = None,
-    quality: int = 90,
+    codec: str = LOSSLESS,
     capture_log: bool = False,
     retries: int = 1,
     instances: int = 1,
@@ -523,7 +525,7 @@ def collect(
                     hide_console=hide_console,
                     camera=camera,
                     speed=speed,
-                    quality=quality,
+                    codec=codec,
                     retries=retries,
                     capture_log=capture_log,
                     all_done=all_done,

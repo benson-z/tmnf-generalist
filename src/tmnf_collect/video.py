@@ -7,13 +7,14 @@ are not lined up, however good the numbers look.
 
 from __future__ import annotations
 
-import io
 import json
 import shutil
 import subprocess
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
+
+from . import frames as frames_mod
 
 STEER_FULL = 65536  # analog steer range is [-65536, 65536]
 
@@ -70,10 +71,19 @@ def _key_box(
     )
 
 
-def _frame_at(blob, row: dict) -> io.BytesIO:
+def _run_codec(run_dir: Path) -> str:
+    """Which codec wrote this run; runs predating the field were JPEG."""
+    try:
+        meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frames_mod.LOSSLESS
+    return meta.get("frame_codec", "jpeg")
+
+
+def _frame_at(blob, row: dict, codec: str) -> Image.Image:
     """Pull one frame out of the run's single frames file."""
     blob.seek(row["frame_offset"])
-    return io.BytesIO(blob.read(row["frame_bytes"]))
+    return frames_mod.decode(blob.read(row["frame_bytes"]), codec=codec)
 
 
 def render_frame(
@@ -183,8 +193,9 @@ def render_run(
     if not rows:
         raise RuntimeError(f"{run_dir} has no samples")
 
+    codec = _run_codec(run_dir)
     blob = (run_dir / "frames.bin").open("rb")
-    first = Image.open(_frame_at(blob, rows[0]))
+    first = _frame_at(blob, rows[0], codec)
     size = (first.width * scale, first.height * scale + panel)
 
     command = [
@@ -209,7 +220,7 @@ def render_run(
     assert process.stdin is not None
     try:
         for row in rows:
-            with Image.open(_frame_at(blob, row)) as image:
+            with _frame_at(blob, row, codec) as image:
                 frame = render_frame(
                     image.convert("RGB"), row, scale=scale, panel=panel
                 )
