@@ -336,6 +336,7 @@ def _worker(
     out_root: Path,
     *,
     claims: Path | None = None,
+    all_jobs: list[Job] | None = None,
     instance_id: int,
     port: int,
     layout: Layout,
@@ -389,7 +390,24 @@ def _worker(
             try:
                 job = pending.get_nowait()
             except queue.Empty:
-                break
+                # This process has offered every map it knows about, but the
+                # claim files are what actually say who has what: another
+                # collector may have handed one back after an instance died.
+                # Parking here would strand that map, since the other process
+                # already passed over it. Terminates: the rescan only finds
+                # maps with no claim, and claiming one removes it.
+                if claims is None:
+                    break
+                unclaimed = [
+                    other
+                    for other in (all_jobs or [])
+                    if not (claims / f"{other.output_name}.claim").exists()
+                ]
+                if not unclaimed:
+                    break
+                for other in unclaimed:
+                    pending.put(other)
+                continue
             if claims is not None and not _claim(claims, job):
                 continue  # another collector is recording this one
             attempts = 1
@@ -545,8 +563,13 @@ def collect(
         claims_dir = out_root / ".claims"
         claims_dir.mkdir(parents=True, exist_ok=True)
 
+    # Longest first. Every instance is idle from the moment it runs out of
+    # work until the slowest one finishes, so what matters is not starting a
+    # 70s map last: claimed late it runs alone while everything else waits at
+    # the barrier. Handing out the long maps while there is still short work to
+    # fill in behind them is the standard greedy bound on that tail.
     pending: queue.Queue = queue.Queue()
-    for job in jobs:
+    for job in sorted(jobs, key=lambda j: -j.replay.race_time):
         pending.put(job)
 
     for index in range(instances):
@@ -573,6 +596,7 @@ def collect(
                     speed=speed,
                     codec=codec,
                     claims=claims_dir,
+                    all_jobs=jobs,
                     retries=retries,
                     capture_log=capture_log,
                     all_done=all_done,
@@ -626,7 +650,11 @@ def collect(
         "results": [asdict(r) for r in results],
         "out_root": str(out_root),
     }
-    (out_root / "index.json").write_text(
+    # Collectors sharing a dataset each write their own index, or the second
+    # one silently overwrites the first and half the run has no record of what
+    # it did. The instance ids are already disjoint, so they name the file.
+    name = "index.json" if not claims else f"index-{instance_base}.json"
+    (out_root / name).write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
     return summary
