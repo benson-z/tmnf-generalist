@@ -447,6 +447,7 @@ def collect(
     hide_console: bool = True,
     camera: int | None = None,
     speed: float = 1.0,
+    instance_base: int = 0,
     budget_hours: float | None = None,
     settings: dict | None = None,
     strip_intros: bool = False,
@@ -515,7 +516,7 @@ def collect(
                 _worker(
                     pending,
                     out_root,
-                    instance_id=index,
+                    instance_id=instance_base + index,
                     port=port + index,
                     layout=layout,
                     width=width,

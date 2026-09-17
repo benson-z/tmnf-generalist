@@ -90,6 +90,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         hide_console=not args.show_console,
         camera=args.camera,
         speed=args.speed,
+        instance_base=args.instance_base,
         budget_hours=args.budget_hours,
         settings=config_mod.effective(args, _COLLECT_PARSER),
         strip_intros=not args.keep_intros,
@@ -337,6 +338,16 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "simulation speed from 1 to 5; above 1x, hold each sample tick "
             "for a natural frame; above 2x requires one instance"
+        ),
+    )
+    p_collect.add_argument(
+        "--instance-base",
+        type=int,
+        default=0,
+        help=(
+            "first instance id. User directories and TMLoader profiles are "
+            "named from it, so two collectors running at once need disjoint "
+            "id ranges as well as disjoint --port ranges"
         ),
     )
     p_collect.add_argument("--limit", type=int, default=None)
