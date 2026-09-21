@@ -86,6 +86,7 @@ class Session:
         hide_ui: bool = True,
         camera: int = 1,
         speed: float = 1.0,
+        offscreen: bool = True,
     ) -> None:
         if not math.isfinite(speed) or not 1 <= speed <= 5:
             raise ValueError("speed must be finite and between 1 and 5")
@@ -98,6 +99,7 @@ class Session:
         self.hide_ui = hide_ui
         self.camera = camera
         self.speed = speed
+        self.offscreen = offscreen
 
         self.controller: Controller | None = None
         self.instance: GameInstance | None = None
@@ -132,6 +134,8 @@ class Session:
             raise SessionError(
                 f"game never reached the menu (state={self.game_state})"
             )
+        if self.offscreen:
+            launcher.render_offscreen(self.instance.pid)
         self._drain(2.0)
 
         self.controller.configure(

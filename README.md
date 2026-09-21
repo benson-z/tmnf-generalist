@@ -109,13 +109,28 @@ Record every replay in a folder:
 ```bash
 uv run tmnf-collect collect path/to/replays --out out/dataset
 
-# several games at once, one port each
-uv run tmnf-collect collect path/to/replays --out out/dataset --instances 4
+# four isolated collector/game processes, one port each
+uv run tmnf-collect collect path/to/replays --out out/dataset --processes 4
 ```
 
 Re-running the same command skips replays that already recorded successfully,
 so an interrupted collection resumes where it stopped. Pass `--no-resume` to
 re-record everything.
+
+`--processes N` starts one coordinator plus `N` isolated collector subprocesses,
+each owning one game. The coordinator is the only scheduler: workers announce
+when they are ready, receive one map directly, and return progress and results
+over multiprocessing queues. No claim files are used. If a game process dies,
+its in-flight map is returned to the coordinator once for another healthy
+worker. Use `--processes 0 --instances N` only to select the older single-
+Python-process/threaded mode; `--claims` remains solely for coordinating
+multiple independently launched legacy commands.
+
+While collecting in a terminal, the command keeps one live progress bar per
+game instance, driven by that replay's race clock, plus an aggregate bar for
+completed, running, and queued maps. Completed results scroll above the live
+rows. Redirected output stays line-oriented and contains no terminal control
+codes.
 
 ### Building a corpus from TMX
 
@@ -125,7 +140,7 @@ replay always match and there is no UID search:
 ```bash
 uv run tmnf-collect harvest --limit 200 --out testdata/corpus --dry-run
 uv run tmnf-collect harvest --limit 200 --out testdata/corpus     --exclude-tags LOL,PressForward,RPG,Trial,Maze
-uv run tmnf-collect collect testdata/corpus --out out/corpus --instances 3
+uv run tmnf-collect collect testdata/corpus --out out/corpus --processes 3
 ```
 
 `--tags` keeps only maps carrying one of the tags named, `--exclude-tags` drops
@@ -166,7 +181,7 @@ Mixed into one training set, the same corner carries contradictory labels.
 
 ```bash
 uv run tmnf-collect filter testdata/corpus --inputs keyboard --max-seconds 180
-uv run tmnf-collect collect testdata/corpus --out out/corpus --instances 3
+uv run tmnf-collect collect testdata/corpus --out out/corpus --processes 3
 ```
 
 It reads each replay's ghost with `pygbx` and looks at the control entries: a
@@ -368,6 +383,10 @@ These all cost real debugging time and are handled in code:
 * Do not take screenshots of, or click on, an instance while it is collecting.
   Activating a window steals focus from the instance that is driving, and that
   is enough to make it drop frames or desync the run outright.
+* Collection renders game windows offscreen by default. They remain shown so
+  Direct3D keeps producing frames, but sit beyond the virtual desktop where
+  they cannot cover other work or receive an accidental click. Use
+  `--no-offscreen` to leave them visible while debugging.
 * Some replays store no inputs at all (`dump_inputs` says so), and there is
   nothing to re-drive; those are reported `no_inputs` and skipped.
 
@@ -411,7 +430,7 @@ are rewound, while input transitions the script issued on those ticks are
 carried forward. `Render()` captures the image and resumes simulation.
 
 ```bash
-uv run tmnf-collect collect testdata/corpus --out out/fast --speed 5 --instances 1
+uv run tmnf-collect collect testdata/corpus --out out/fast --speed 5 --processes 1
 ```
 
 Three full-replay comparisons (13.9 s, 29.1 s and 40.5 s) produced 1,673/1,673
@@ -433,7 +452,7 @@ seven reproducible replays in an eight-map mixed run; known-bad B08 was the
 only rejection. These are now the committed defaults:
 
 ```bash
-uv run tmnf-collect collect testdata/corpus --out out/parallel-fast --speed 2 --instances 8
+uv run tmnf-collect collect testdata/corpus --out out/parallel-fast --speed 2 --processes 8
 ```
 
 Higher parallel speeds remain scheduling-sensitive. Depending on the round,

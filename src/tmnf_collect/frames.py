@@ -14,11 +14,12 @@ epoch. Measured on 200 real 320x240 frames straight out of the game
     jpeg q80 (lossy)  11.6KB     5712/s      4849/s    0.85x     0.3ms
 
 The scaling column is why this is QOI packed with zstd rather than the smallest
-option. Collection runs every game instance as a thread in one process -- one
-socket reader and one encoder thread each -- so an encoder that holds the GIL
-starves the readers, and a reader that stops draining backs the plugin's writes
-up until one fails, which disconnects that instance for the rest of the run.
-Both of these release it, measured, so eight encoders really do run at once.
+option. Every game lane has one socket reader and one encoder thread. The
+default coordinator isolates lanes in subprocesses; the fallback thread mode
+shares one interpreter. An encoder that holds its process's GIL can still
+starve that lane's socket reader, and a reader that stops draining backs the
+plugin's writes up until one fails, disconnecting the instance for the run.
+Both codec stages release the GIL, so the reader and encoder overlap cleanly.
 
 The size cost of that choice is 4.6% against lossless WebP, bought with 3.5x
 the encoding rate; against PNG there is no trade at all, since this is smaller

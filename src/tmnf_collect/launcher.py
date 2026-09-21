@@ -12,16 +12,99 @@ it belongs to (``IO::GetCommandLineArgs`` inside AngelScript).
 
 from __future__ import annotations
 
+import ctypes
 import json
 import subprocess
 import time
 import uuid
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 
 from .paths import Layout, detect
 
 GAME_EXE = "TmForever.exe"
+
+# A minimized Direct3D 9 window stops rendering, which starves the collector's
+# natural-frame barrier.  Moving it beyond the virtual desktop leaves it shown
+# and rendering without letting it cover (or accidentally receive clicks from)
+# the desktop the collector is running on.
+SW_SHOWNOACTIVATE = 4
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SM_XVIRTUALSCREEN = 76
+SM_CXVIRTUALSCREEN = 78
+WNDENUMPROC = ctypes.WINFUNCTYPE(
+    wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+)
+
+
+def _user32() -> ctypes.WinDLL:
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [
+        wintypes.HWND,
+        wintypes.HWND,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
+    ]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    user32.GetSystemMetrics.restype = ctypes.c_int
+    return user32
+
+
+def _windows_for(pid: int) -> list[int]:
+    """Return visible top-level windows owned by ``pid``."""
+    user32 = _user32()
+    found: list[int] = []
+
+    @WNDENUMPROC
+    def visit(hwnd: int, _lparam: int) -> bool:
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return found
+
+
+def render_offscreen(pid: int) -> int:
+    """Move a process's windows beyond the desktop without minimizing them."""
+    user32 = _user32()
+    right = (
+        user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        + user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+    )
+    windows = _windows_for(pid)
+    for hwnd in windows:
+        user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
+        user32.SetWindowPos(
+            hwnd,
+            0,
+            right + 64,
+            0,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+    return len(windows)
 
 
 def _powershell(script: str) -> str:

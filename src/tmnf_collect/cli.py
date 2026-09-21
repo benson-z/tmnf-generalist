@@ -6,9 +6,13 @@ import argparse
 import json
 import math
 import sys
+import threading
 import time
 from collections import Counter
 from pathlib import Path
+
+from rich.console import Console
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn
 
 from . import (
     config as config_mod,
@@ -28,6 +32,132 @@ from . import staging
 
 # Set when the parser is built; used to record what a run was configured with.
 _COLLECT_PARSER: argparse.ArgumentParser | None = None
+
+
+class _CollectProgress:
+    """Rich progress rows for the queue and each concurrent collector."""
+
+    def __init__(self) -> None:
+        self._console = Console(file=sys.stdout)
+        self._tty = self._console.is_terminal
+        self._lock = threading.Lock()
+        self._active: dict[int, collect_mod.JobProgress] = {}
+        self._tasks: dict[int, int] = {}
+        self._completed = 0
+        self._total = 0
+        self._announced = False
+        self._progress = Progress(
+            TextColumn("{task.description:>5}"),
+            BarColumn(bar_width=22),
+            TaskProgressColumn(),
+            TextColumn("{task.fields[detail]}"),
+            console=self._console,
+            refresh_per_second=10,
+            disable=not self._tty,
+            expand=True,
+        )
+        self._progress.start()
+        self._overall_task = self._progress.add_task(
+            "TOTAL", total=0, detail="0/0 maps  0 queued  0 running"
+        )
+
+    def update(self, update: collect_mod.JobProgress) -> None:
+        with self._lock:
+            self._completed = update.completed
+            self._total = update.total
+            if update.instance is not None:
+                if update.state in ("done", "idle"):
+                    self._active.pop(update.instance, None)
+                else:
+                    self._active[update.instance] = update
+
+            if not self._tty:
+                if not self._announced:
+                    print(f"queued {self._total} map(s)", flush=True)
+                    self._announced = True
+                if update.instance is not None and update.state == "preparing":
+                    retry = f" attempt={update.attempt}" if update.attempt > 1 else ""
+                    print(
+                        f"  [{update.instance}] starting {update.output_name}{retry}",
+                        flush=True,
+                    )
+                return
+            self._sync_tasks_locked()
+
+    def result(self, result: collect_mod.JobResult) -> None:
+        line = (
+            f"  [{result.instance}] {result.status:14} {result.output_name} "
+            f"samples={result.samples} {result.seconds}s attempts={result.attempts}"
+            + (
+                f" arming_retries={result.preroll_restarts}"
+                if result.preroll_restarts
+                else ""
+            )
+            + (f" {result.detail}" if result.detail else "")
+        )
+        with self._lock:
+            if self._tty:
+                self._console.print(line, markup=False)
+            else:
+                print(line, flush=True)
+
+    def close(self) -> None:
+        with self._lock:
+            if self._tty:
+                self._sync_tasks_locked(refresh=True)
+            self._progress.stop()
+
+    def _sync_tasks_locked(self, *, refresh: bool = False) -> None:
+        running = len(self._active)
+        queued = max(0, self._total - self._completed - running)
+        active_progress = sum(
+            min(update.race_time / update.expected_time, 1.0)
+            for update in self._active.values()
+            if update.expected_time
+        )
+        overall_progress = min(
+            float(self._total), self._completed + active_progress
+        )
+        self._progress.update(
+            self._overall_task,
+            completed=overall_progress,
+            total=self._total,
+            detail=(
+                f"{self._completed}/{self._total} maps  "
+                f"{queued} queued  {running} running"
+            ),
+            refresh=refresh,
+        )
+
+        stale = set(self._tasks) - set(self._active)
+        for instance in stale:
+            self._progress.remove_task(self._tasks.pop(instance))
+
+        for instance, update in sorted(self._active.items()):
+            elapsed = update.race_time / 1000
+            expected = update.expected_time / 1000
+            timing = (
+                f"{elapsed:.1f}/{expected:.1f}s"
+                if update.state == "recording"
+                else f"preparing {expected:.1f}s"
+            )
+            retry = f" try {update.attempt}" if update.attempt > 1 else ""
+            detail = f"{timing}  {update.output_name}{retry}"
+            task = self._tasks.get(instance)
+            if task is None:
+                task = self._progress.add_task(
+                    f"{instance:02d}",
+                    total=update.expected_time,
+                    detail=detail,
+                )
+                self._tasks[instance] = task
+            self._progress.update(
+                task,
+                completed=update.race_time,
+                total=update.expected_time,
+                detail=detail,
+                refresh=refresh,
+            )
 
 
 def _collect_speed(value: object) -> float:
@@ -76,40 +206,43 @@ def _cmd_install_plugin(args: argparse.Namespace) -> int:
 def _cmd_collect(args: argparse.Namespace) -> int:
     # Config-file defaults bypass argparse's type converter.
     args.speed = _collect_speed(args.speed)
-    if args.speed > 2 and args.instances != 1:
+    lanes = args.processes or args.instances
+    if args.speed > 2 and lanes != 1:
         assert _COLLECT_PARSER is not None
-        _COLLECT_PARSER.error("--speed above 2 requires --instances 1")
-    summary = collect_mod.collect(
-        Path(args.replays),
-        Path(args.out),
-        port=args.port,
-        width=args.width,
-        height=args.height,
-        period_ms=args.period,
-        hide_ui=not args.show_ui,
-        hide_console=not args.show_console,
-        camera=args.camera,
-        speed=args.speed,
-        instance_base=args.instance_base,
-        claims=args.claims,
-        budget_hours=args.budget_hours,
-        settings=config_mod.effective(args, _COLLECT_PARSER),
-        strip_intros=not args.keep_intros,
-        fetch_maps=args.fetch_maps,
-        limit=args.limit,
-        codec=args.frame_codec,
-        capture_log=args.log,
-        instances=args.instances,
-        resume=not args.no_resume,
-        progress=lambda r: print(
-            f"  [{r.instance}] {r.status:14} {r.output_name} "
-            f"samples={r.samples} {r.seconds}s "
-            f"attempts={r.attempts}"
-            + (f" arming_retries={r.preroll_restarts}" if r.preroll_restarts else "")
-            + (f" {r.detail}" if r.detail else ""),
-            flush=True,
-        ),
-    )
+        _COLLECT_PARSER.error(
+            "--speed above 2 requires exactly one --instance or --process"
+        )
+    display = _CollectProgress()
+    try:
+        summary = collect_mod.collect(
+            Path(args.replays),
+            Path(args.out),
+            port=args.port,
+            width=args.width,
+            height=args.height,
+            period_ms=args.period,
+            hide_ui=not args.show_ui,
+            hide_console=not args.show_console,
+            camera=args.camera,
+            speed=args.speed,
+            offscreen=args.offscreen,
+            instance_base=args.instance_base,
+            claims=args.claims,
+            budget_hours=args.budget_hours,
+            settings=config_mod.effective(args, _COLLECT_PARSER),
+            strip_intros=not args.keep_intros,
+            fetch_maps=args.fetch_maps,
+            limit=args.limit,
+            codec=args.frame_codec,
+            capture_log=args.log,
+            instances=args.instances,
+            processes=args.processes,
+            resume=not args.no_resume,
+            progress=display.result,
+            live_progress=display.update,
+        )
+    finally:
+        display.close()
     trimmed = {k: v for k, v in summary.items() if k != "results"}
     print(json.dumps(trimmed, indent=2))
     return 0 if not summary["by_status"].get("error") else 1
@@ -355,9 +488,9 @@ def main(argv: list[str] | None = None) -> int:
         "--claims",
         action="store_true",
         help=(
-            "claim each map through a lock file under the dataset, so several "
-            "collector processes can share one output directory and keep "
-            "pulling work dynamically instead of splitting it up front"
+            "legacy mode for several independently launched commands: claim "
+            "maps through files under the dataset; incompatible with the "
+            "built-in --processes coordinator"
         ),
     )
     p_collect.add_argument("--limit", type=int, default=None)
@@ -371,7 +504,17 @@ def main(argv: list[str] | None = None) -> int:
         "--instances",
         type=int,
         default=1,
-        help="game instances to run in parallel, one port each",
+        help="in-process worker threads (used only when --processes is 0)",
+    )
+    p_collect.add_argument(
+        "--processes",
+        type=int,
+        default=0,
+        help=(
+            "isolated collector subprocesses and game instances managed by "
+            "this command; when nonzero, replaces --instances and uses the "
+            "parent process as the central scheduler"
+        ),
     )
     p_collect.add_argument(
         "--no-resume",
@@ -393,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         help=(
-            "stop claiming new maps after this much wall clock; the run in "
+            "stop assigning new maps after this much wall clock; the run in "
             "progress finishes, and a later collect resumes the rest"
         ),
     )
@@ -421,6 +564,15 @@ def main(argv: list[str] | None = None) -> int:
         "--show-ui",
         action="store_true",
         help="keep the in-game speedometer and clock in the frames",
+    )
+    p_collect.add_argument(
+        "--offscreen",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "render game windows beyond the virtual desktop (default); use "
+            "--no-offscreen to leave them visible for debugging"
+        ),
     )
     p_collect.add_argument(
         "--log",

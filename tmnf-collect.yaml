@@ -5,10 +5,20 @@
 # Every value here is measured rather than guessed; the notes say what by.
 
 collect:
+  # Keep every game shown and rendering, but beyond the virtual desktop. Unlike
+  # minimizing, this preserves Direct3D frames and the natural-frame barrier.
+  offscreen: true
+
   # Eight instances at 2x passed 16/16 synchronized matrix runs across A07 and
   # C03, then 7/7 reproducible replays through the normal mixed-map scheduler.
   # That produced about 15.8x aggregate capture speed on the matrix runs.
   instances: 8
+
+  # Launch the eight game lanes as isolated collector subprocesses under one
+  # parent coordinator. The parent assigns every map directly, so this needs no
+  # claim files and still starts from one `tmnf-collect collect` command.
+  # Set to 0 to fall back to the older in-process worker threads above.
+  processes: 8
 
   # Chase camera, further back and higher than cam 2 (7.37 m vs 6.24 m behind,
   # 3.29 m vs 1.70 m above). Whatever is chosen has to be used at RL time too,

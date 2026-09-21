@@ -10,6 +10,7 @@ dependencies = [
     "qoi>=0.7",          # lossless frame codec; see tmnf_collect.frames
     "zstandard>=0.22",   # packs the QOI stream, and releases the GIL
     "pyyaml>=6.0",
+    "rich>=13.9",
 ]
 
 [project.scripts]

@@ -55,6 +55,8 @@ def run(
         width=width,
         height=height,
         period_ms=period_ms,
+        # --keep-open is for inspecting the live game after the probe.
+        offscreen=not keep_open,
     )
     session.start()
     try:
