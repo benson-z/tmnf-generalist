@@ -87,6 +87,7 @@ class Session:
         camera: int = 1,
         speed: float = 1.0,
         offscreen: bool = True,
+        reset_camera: bool = False,
     ) -> None:
         if not math.isfinite(speed) or not 1 <= speed <= 5:
             raise ValueError("speed must be finite and between 1 and 5")
@@ -100,6 +101,7 @@ class Session:
         self.camera = camera
         self.speed = speed
         self.offscreen = offscreen
+        self.reset_camera = reset_camera
 
         self.controller: Controller | None = None
         self.instance: GameInstance | None = None
@@ -145,6 +147,8 @@ class Session:
             height=self.height,
             hide_ui=self.hide_ui,
             frame_barrier=self.speed > 1,
+            speed=self.speed,
+            reset_camera=self.reset_camera,
         )
 
     def close(self) -> None:

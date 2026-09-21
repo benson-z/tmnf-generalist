@@ -9,17 +9,19 @@ collect:
   # window and the game stops rendering with them.
   offscreen: true
 
-  # 8 lanes at 1x: 20/20 reproduced, 4.6x aggregate. 10 lanes drops frames
-  # (19/20), 12 lanes drops many (11/20). The CPU is the limit.
+  # 8 lanes at 2x: 20/20 reproduced, every frame on its own tick, 141 s for
+  # 834 s of runs (5.9x aggregate). 1x takes 182 s. 10 lanes drop frames,
+  # 12 lanes drop many. The CPU is the limit.
   instances: 8
   processes: 8
+  speed: 2
 
-  # Speed 1. Above 1x the plugin rewinds the extra tick the game runs past a
-  # sample point, and under Wine that rewind is not exact: input transitions
-  # on the tick after a sample point shift by a tick, and 3 of 20 replays
-  # then diverge (at 8 lanes; 6-7 of 20 at 4-6 lanes). 1x with 8 lanes is
-  # within 20% of 2x's wall time here anyway, because the CPU is saturated.
-  speed: 1
+  # The frame for a given car state is then the same in every run: 16678 of
+  # 16680 samples had a byte-identical camera pose across two runs (the two
+  # that differed were finish ticks, where the game switches camera). Without
+  # this the chase camera is smoothed on wall-clock time, and two runs of the
+  # same replay differed by 1.2 m mean camera position at 2x.
+  reset_camera: true
 
   camera: 1
   width: 320

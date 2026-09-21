@@ -226,6 +226,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
             camera=args.camera,
             speed=args.speed,
             offscreen=args.offscreen,
+            reset_camera=args.reset_camera,
             instance_base=args.instance_base,
             claims=args.claims,
             budget_hours=args.budget_hours,
@@ -564,6 +565,16 @@ def main(argv: list[str] | None = None) -> int:
         "--show-ui",
         action="store_true",
         help="keep the in-game speedometer and clock in the frames",
+    )
+    p_collect.add_argument(
+        "--reset-camera",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "snap the chase camera to the car at every sample point, so the "
+            "frame for a given car state is the same in every run; the game "
+            "otherwise smooths the camera on wall-clock time"
+        ),
     )
     p_collect.add_argument(
         "--offscreen",

@@ -128,21 +128,29 @@ selects through `TMNF_CONFIG`:
   a run needs the instance foreground, and an instance that loses foreground
   mid-run has its inputs released and diverges. Sharing one desktop, a lane's
   second map failed to arm every time; with one each, nothing crosses over.
-* **Speed 1, 8 lanes: 20/20 replays reproduced, 4.6x aggregate.** Above 1x the
-  plugin's rewind of the tick the game runs past a sample point is not exact
-  here (input transitions on the tick after a sample point shift by a tick),
-  and 3 of 20 replays diverge. 1x is within 20% of 2x's wall time anyway,
-  because the CPU saturates at 8 lanes; 10 lanes drop frames, 12 drop many.
-* **The chase camera is not reproducible across runs**, on any platform:
-  it is smoothed on render time. With byte-identical car trajectories, two
-  runs of the same replay differ by 0.2-0.4 m mean camera position at 8
-  lanes (max 2-3 m), and more under more load. Each frame's own camera pose
-  is recorded, so the data is consistent; the frames are just not repeatable.
+* **Speed 2, 8 lanes: 20/20 replays reproduced, every frame on its own
+  tick, 5.9x aggregate** (141 s for 834 s of runs; 1x takes 182 s). The
+  frame barrier now holds the game the way Linesight does: a rewind to the
+  state the game is already in, which drops the ticks the loop had queued,
+  then speed 0. Before that, `Running=false` let one more tick run on nearly
+  every sample point, the plugin rewound it, and re-applying inputs around
+  that rewind shifted transitions by a tick: 3 of 20 replays diverged at 2x.
+  10 lanes drop frames, 12 drop many; the CPU is the limit.
+* **`reset_camera: true` makes frames reproducible.** The chase camera is
+  smoothed on wall-clock time, so with byte-identical car trajectories two
+  runs of the same replay still differed by 1.2 m mean camera position at
+  2x. Snapping the camera to the car at every sample point (the same
+  rewind, with `resetCamera`) gave a byte-identical camera pose on 16678 of
+  16680 samples across two runs; the two others were finish ticks, where
+  the game switches camera. The camera then sits at a fixed offset rather
+  than lagging on acceleration, which is a different look from the natural
+  chase cam, so it is a setting rather than the rule; whatever is chosen has
+  to be the same at RL time.
 * TMInterface's `autologin` is set to `1` (the first, account-less profile)
   so the game reaches its menu on its own; `tmnf-collect kill` also removes
   the Wine desktops; the in-game console is read through the Wayland
   clipboard, which every instance shares, so `--log` is only trustworthy with
-  one lane.
+  one lane. `tmnf-collect video` works in the container (ffmpeg is there).
 
 The controller's Windows-only parts (process discovery, window placement,
 the clipboard, junctions, `Program Files`) are isolated in `hostos.py`,
@@ -587,3 +595,11 @@ reset—not Windows painting or screenshot timing—causes most of the shift. Th
 supported speedup therefore waits for ordinary `Render()` callbacks and does
 not patch TMInterface or request an OS repaint. The camera pose is recorded on
 every sample so the remaining variation is visible.
+
+`--reset-camera` opts into that same reset deliberately, at every sample point.
+It trades the natural camera for a reproducible one: the pose becomes a
+function of the car state alone (byte-identical across runs on all but the
+finish tick), at a fixed offset instead of the smoothed lag. Worth it where the
+natural camera's own run-to-run variation is large — under Wine with eight
+instances it was 0.45 m mean, not the 0.05 m measured on Windows — and only if
+RL-time inference resets the camera the same way, as Linesight does.

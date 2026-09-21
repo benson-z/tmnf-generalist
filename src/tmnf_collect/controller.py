@@ -100,6 +100,8 @@ class Controller:
         height: int | None = None,
         hide_ui: bool | None = None,
         frame_barrier: bool | None = None,
+        speed: float | None = None,
+        reset_camera: bool | None = None,
     ) -> None:
         settings: dict[str, object] = {}
         if collect is not None:
@@ -114,6 +116,10 @@ class Controller:
             settings["hide_ui"] = hide_ui
         if frame_barrier is not None:
             settings["frame_barrier"] = frame_barrier
+        if speed is not None:
+            settings["speed"] = speed
+        if reset_camera is not None:
+            settings["reset_camera"] = reset_camera
         if settings:
             self._send(protocol.encode_config(**settings))
 

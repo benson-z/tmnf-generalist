@@ -13,6 +13,8 @@ RUN dpkg --add-architecture i386 \
       gcc libc6-dev liblzo2-dev \
       # headless Wayland desktop, X bridge for Wine, VNC + browser console
       sway xwayland wayvnc novnc python3-websockify foot wl-clipboard grim xdotool \
+      # `tmnf-collect video` renders a recorded run back into a video
+      ffmpeg \
       # GPU: Mesa GL for wined3d (32-bit game needs the i386 driver too);
       # Vulkan for the compositor and for anything else that wants it
       libgl1-mesa-dri libgl1-mesa-dri:i386 libgl1 libgl1:i386 \

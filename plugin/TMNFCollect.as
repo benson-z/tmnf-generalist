@@ -63,7 +63,17 @@ bool g_pending = false;
 // is free to run quickly between sample points.
 bool g_frameBarrier = false;
 bool g_frameHeld = false;
-SimulationState@ g_frameState = null;
+// The hold is a speed of 0, the way Linesight pauses the game, rather than
+// Running=false: after Running=false the game still ran one tick, which then
+// had to be rewound, and re-applying inputs around that rewind was not exact.
+// The run's speed comes from the controller so it can be put back.
+float g_speed = 1.0f;
+// Ticks that ran anyway while held: should stay at zero.
+int g_heldTicks = 0;
+// Snap the chase camera to the car at each sample point. The game smooths it
+// on wall-clock time, so without this the frame for a given car state depends
+// on frame pacing and is not reproducible.
+bool g_resetCamera = false;
 int p_raceTime = 0;
 uint p_displaySpeed = 0;
 float p_velX = 0, p_velY = 0, p_velZ = 0;
@@ -99,7 +109,7 @@ void Main()
 
 void OnDisabled()
 {
-    if (g_frameHeld) GetSimulationManager().Running = true;
+    if (g_frameHeld) { GetSimulationManager().SetSpeed(g_speed); g_frameHeld = false; }
     Disconnect();
 }
 
@@ -238,6 +248,8 @@ void ApplyConfigEntry(const string&in entry)
     string value = entry.Substr(uint(eq) + 1);
 
     if (key == "collect") {
+        if (g_collecting && value != "1") log("TMNFCollect: ticks run while held: " + g_heldTicks);
+        g_heldTicks = 0;
         g_collecting = (value == "1");
         g_lastSampleTime = -1000000;
         ApplyRaceInterface();
@@ -255,6 +267,10 @@ void ApplyConfigEntry(const string&in entry)
         g_capH = int(Text::ParseInt(value));
     } else if (key == "frame_barrier") {
         g_frameBarrier = (value == "1");
+    } else if (key == "speed") {
+        g_speed = Text::ParseFloat(value);
+    } else if (key == "reset_camera") {
+        g_resetCamera = (value == "1");
     } else if (key == "hide_ui") {
         g_hideUi = (value == "1");
         ApplyRaceInterface();
@@ -391,20 +407,7 @@ void StashTelemetry(SimulationManager@ sim, int raceTime)
 
 void OnRunStep(SimulationManager@ sim)
 {
-    if (g_frameHeld && g_pending && g_frameState !is null) {
-        // Console commands may already have fired for the queued next tick.
-        // Rewinding physics must not undo a release that the command scheduler
-        // will not issue twice.
-        InputState nextInputs = sim.GetInputState();
-        sim.RewindToState(g_frameState, false);
-        sim.SetInputState(InputType::Gas, nextInputs.Gas);
-        sim.SetInputState(InputType::Steer, nextInputs.Steer);
-        sim.SetInputState(InputType::Up, nextInputs.Up ? 1 : 0);
-        sim.SetInputState(InputType::Down, nextInputs.Down ? 1 : 0);
-        sim.SetInputState(InputType::Left, nextInputs.Left ? 1 : 0);
-        sim.SetInputState(InputType::Right, nextInputs.Right ? 1 : 0);
-        return;
-    }
+    if (g_frameHeld && g_pending) g_heldTicks++;
     if (!EnsureConnected()) return;
 
     int raceTime = sim.RaceTime;
@@ -440,13 +443,28 @@ void OnRunStep(SimulationManager@ sim)
     // sample point, that sample never became a frame.
     if (g_pending) g_dropped++;
 
+    if (g_frameBarrier) {
+        // A rewind to the state the game is already in changes no physics.
+        // What it does is drop the ticks the loop had still queued for this
+        // iteration, so that speed 0 takes effect now rather than a few
+        // ticks late (Linesight pauses the same way). A rewind also drops
+        // the input state, so this tick's own inputs go back in; those are
+        // the values already in effect, not a shifted transition.
+        InputState inputs = sim.GetInputState();
+        sim.RewindToState(sim.SaveState(), g_resetCamera);
+        sim.SetInputState(InputType::Gas, inputs.Gas);
+        sim.SetInputState(InputType::Steer, inputs.Steer);
+        sim.SetInputState(InputType::Up, inputs.Up ? 1 : 0);
+        sim.SetInputState(InputType::Down, inputs.Down ? 1 : 0);
+        sim.SetInputState(InputType::Left, inputs.Left ? 1 : 0);
+        sim.SetInputState(InputType::Right, inputs.Right ? 1 : 0);
+        sim.SetSpeed(0.0f);
+        g_frameHeld = true;
+    } else if (g_resetCamera) {
+        sim.ResetCamera();
+    }
     StashTelemetry(sim, raceTime);
     g_pending = true;
-    if (g_frameBarrier) {
-        @g_frameState = sim.SaveState();
-        sim.Running = false;
-        g_frameHeld = true;
-    }
 }
 
 int g_lastCpCount = -1;
@@ -471,9 +489,8 @@ void OnGameStateChanged(TM::GameState state)
 void Render()
 {
     if (g_frameHeld) {
-        GetSimulationManager().Running = true;
+        GetSimulationManager().SetSpeed(g_speed);
         g_frameHeld = false;
-        @g_frameState = null;
     }
     // Render() is the only callback that keeps running in the menus, so this is
     // where the connection gets (re-)established between races.

@@ -290,6 +290,7 @@ def run_job(
                     "frame_size": [session.width, session.height],
                     "frame_codec": codec,
                     "hide_ui": session.hide_ui,
+                    "reset_camera": session.reset_camera,
                 }
             )
     except (SessionError, OSError, ConnectionError) as exc:
@@ -441,6 +442,7 @@ def _worker(
     camera: int | None,
     speed: float,
     offscreen: bool,
+    reset_camera: bool,
     codec: str,
     retries: int,
     capture_log: bool,
@@ -471,6 +473,7 @@ def _worker(
             camera=camera,
             speed=speed,
             offscreen=offscreen,
+            reset_camera=reset_camera,
         )
         session.start()
         session.prepare(hide_console=hide_console)
@@ -625,6 +628,7 @@ def _process_lane(
     camera: int | None,
     speed: float,
     offscreen: bool,
+    reset_camera: bool,
     codec: str,
     retries: int,
     capture_log: bool,
@@ -652,6 +656,7 @@ def _process_lane(
             camera=camera,
             speed=speed,
             offscreen=offscreen,
+            reset_camera=reset_camera,
         )
         session.start()
         session.prepare(hide_console=hide_console)
@@ -751,6 +756,7 @@ def _run_process_pool(
     camera: int | None,
     speed: float,
     offscreen: bool,
+    reset_camera: bool,
     codec: str,
     retries: int,
     capture_log: bool,
@@ -786,6 +792,7 @@ def _run_process_pool(
         "camera": camera,
         "speed": speed,
         "offscreen": offscreen,
+        "reset_camera": reset_camera,
         "codec": codec,
         "retries": retries,
         "capture_log": capture_log,
@@ -996,6 +1003,7 @@ def collect(
     camera: int | None = None,
     speed: float = 1.0,
     offscreen: bool = True,
+    reset_camera: bool = False,
     instance_base: int = 0,
     claims: bool = False,
     budget_hours: float | None = None,
@@ -1096,6 +1104,7 @@ def collect(
             camera=camera,
             speed=speed,
             offscreen=offscreen,
+            reset_camera=reset_camera,
             codec=codec,
             retries=retries,
             capture_log=capture_log,
@@ -1139,6 +1148,7 @@ def collect(
                         camera=camera,
                         speed=speed,
                         offscreen=offscreen,
+                        reset_camera=reset_camera,
                         codec=codec,
                         claims=claims_dir,
                         all_jobs=jobs,
