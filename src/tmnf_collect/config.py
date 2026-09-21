@@ -15,6 +15,7 @@ nothing is exactly the failure this file exists to prevent.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 DEFAULT_NAME = "tmnf-collect.yaml"
@@ -25,7 +26,12 @@ class ConfigError(RuntimeError):
 
 
 def find(explicit: str | None = None) -> Path | None:
-    """The config to use: the one asked for, else one beside the project."""
+    """The config to use: the one asked for, else one beside the project.
+
+    ``TMNF_CONFIG`` names one for a whole environment (the Linux container
+    sets it, since its measured settings differ from the Windows ones).
+    """
+    explicit = explicit or os.environ.get("TMNF_CONFIG")
     if explicit:
         path = Path(explicit)
         if not path.is_file():

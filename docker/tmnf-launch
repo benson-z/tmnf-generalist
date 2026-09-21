@@ -1,0 +1,12 @@
+#!/bin/bash
+# Convenience launcher for things you click through on the console.
+set -euo pipefail
+TML="$WINEPREFIX/drive_c/users/$USER/AppData/Local/TMLoader"
+case "${1:-}" in
+    tmloader)  cd "$TML" && exec wine TMLoader.exe ;;
+    game)      cd "$TML" && exec wine TMLoader.exe run TmForever "${2:-default}" ;;
+    installer) exec wine /dl/tmnationsforever_setup.exe ;;
+    winecfg)   exec winecfg ;;
+    term)      exec foot ;;
+    *) echo "usage: tmnf-launch {tmloader|game [profile]|installer|winecfg|term}" >&2; exit 2 ;;
+esac

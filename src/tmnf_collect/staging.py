@@ -16,6 +16,7 @@ import shutil
 from pathlib import Path
 
 from . import mediatracker
+from .hostos import campaign_root
 from .paths import Layout, detect
 
 STAGE_DIR = "tmnf-collect"
@@ -25,9 +26,7 @@ STAGE_DIR = "tmnf-collect"
 # campaign one is always present.
 BOOTSTRAP_TRACK = "A01-Race.Challenge.Gbx"
 BOOTSTRAP_REPLAY = "A01-Race.Replay.gbx"
-_CAMPAIGN_WHITE = Path(
-    r"C:\Program Files (x86)\TmNationsForever\GameData\Tracks\Campaigns\Nations\White"
-)
+_CAMPAIGN_WHITE = campaign_root() / "Nations" / "White"
 
 
 def challenges_dir(layout: Layout) -> Path:

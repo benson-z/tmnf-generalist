@@ -1,0 +1,27 @@
+# docker compose up -d --build
+# Console: http://<host>:6080/vnc.html?autoconnect=1&resize=scale
+services:
+  tmnf:
+    build: .
+    image: tmnf-collect:latest
+    container_name: tmnf
+    init: true
+    restart: unless-stopped
+    user: "1000:1000"
+    # host gids of /dev/dri/renderD128 (render) and /dev/dri/card0 (video)
+    group_add:
+      - "${RENDER_GID:-992}"
+      - "${VIDEO_GID:-44}"
+    devices:
+      - /dev/dri:/dev/dri
+    shm_size: 2g
+    env_file:
+      - .env
+    ports:
+      - "6080:6080"
+    volumes:
+      - ./data/home:/home/tmnf          # Wine prefix, venv, game user data
+      - ./dl:/dl:ro                     # installers (not in git)
+      - ..:/work                        # this repo
+      - ${TMNF_OUT:-./data/out}:/out    # datasets
+    working_dir: /work

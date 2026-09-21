@@ -1,0 +1,42 @@
+# Settings for the Linux container (TMNF under Wine, Ryzen 5 5560U with the
+# Vega iGPU, 6 cores / 12 threads). Selected by TMNF_CONFIG; the yaml beside
+# the project holds the Windows numbers. Every value here was measured on this
+# box with 20 harvested replays (834 s of runs).
+collect:
+  # Each instance lives in its own Wine desktop and is tiled on the console
+  # output, so it can be watched. Not actually off screen; the instances just
+  # must not overlap, because the compositor stops sending frames to a covered
+  # window and the game stops rendering with them.
+  offscreen: true
+
+  # 8 lanes at 1x: 20/20 reproduced, 4.6x aggregate. 10 lanes drops frames
+  # (19/20), 12 lanes drops many (11/20). The CPU is the limit.
+  instances: 8
+  processes: 8
+
+  # Speed 1. Above 1x the plugin rewinds the extra tick the game runs past a
+  # sample point, and under Wine that rewind is not exact: input transitions
+  # on the tick after a sample point shift by a tick, and 3 of 20 replays
+  # then diverge (at 8 lanes; 6-7 of 20 at 4-6 lanes). 1x with 8 lanes is
+  # within 20% of 2x's wall time here anyway, because the CPU is saturated.
+  speed: 1
+
+  camera: 1
+  width: 320
+  height: 240
+  period: 50
+  show_ui: false
+  keep_intros: false
+  frame_codec: qoi-zstd
+
+harvest:
+  limit: 400
+  min_awards: 5
+  min_seconds: 25.0
+  max_seconds: 75.0
+  prefer: median
+  exclude_tags: LOL,PressForward,RPG,Trial,Maze,Stunt,Story
+
+filter:
+  inputs: keyboard
+  max_seconds: 180.0

@@ -89,6 +89,66 @@ uv run tmnf-collect filter <dir>    # sort replays by input device
 uv run tmnf-collect kill            # stop every running instance
 ```
 
+## Linux: the same rig under Wine, in a container
+
+`docker/` runs everything on a Linux host with nothing installed beyond
+Docker: the game, TMLoader and TMInterface under Wine, a headless GPU
+compositor (sway on the render node, so no display or X server on the host)
+and a browser console. The host lends `/dev/dri` and nothing else.
+
+```bash
+cd docker
+cp .env.example .env           # console password, /dev/dri gids, dataset dir
+mkdir dl                       # tmnationsforever_setup.exe and TMLoader-latest.zip
+docker compose up -d --build   # first start installs the game into the prefix
+docker exec -w /work tmnf uv sync
+docker exec -w /work tmnf uv run tmnf-collect smoke --out /out/smoke
+docker exec -w /work tmnf uv run tmnf-collect harvest --out /out/harvest --limit 100
+docker exec -w /work tmnf uv run tmnf-collect collect /out/harvest --out /out/dataset
+```
+
+The console is `http://<host>:6080/vnc.html?autoconnect=1&resize=scale`
+(HTTP basic auth from `.env`). It shows the whole desktop, with the game
+instances tiled on it, one 800x600 Wine desktop each. Super+Return opens a
+terminal there, Super+t the TMLoader UI; `tmnf-launch game` starts one game by
+hand. The Wine prefix, the venv and the game's user data persist in
+`docker/data/home`; datasets go to `docker/data/out` (or `TMNF_OUT`).
+
+What differs from Windows, all of it measured on a Ryzen 5 5560U (6 cores,
+Vega iGPU) and written down in `docker/tmnf-collect.yaml`, which the container
+selects through `TMNF_CONFIG`:
+
+* **Wine's own Direct3D 9, not DXVK.** Through DXVK every lit surface renders
+  black (sky and emissives fine). The game is set to windowed 640x480 on the
+  Minimum Quality preset; PC3 shaders also render black on Mesa, and the
+  launcher's benchmark picks them, so `docker/seed/` carries a known good
+  system config, profile and score file that a fresh prefix starts from.
+* **One Wine virtual desktop per instance.** Wine keeps the foreground window
+  per desktop, and that is what TMInterface's input injection keys off: arming
+  a run needs the instance foreground, and an instance that loses foreground
+  mid-run has its inputs released and diverges. Sharing one desktop, a lane's
+  second map failed to arm every time; with one each, nothing crosses over.
+* **Speed 1, 8 lanes: 20/20 replays reproduced, 4.6x aggregate.** Above 1x the
+  plugin's rewind of the tick the game runs past a sample point is not exact
+  here (input transitions on the tick after a sample point shift by a tick),
+  and 3 of 20 replays diverge. 1x is within 20% of 2x's wall time anyway,
+  because the CPU saturates at 8 lanes; 10 lanes drop frames, 12 drop many.
+* **The chase camera is not reproducible across runs**, on any platform:
+  it is smoothed on render time. With byte-identical car trajectories, two
+  runs of the same replay differ by 0.2-0.4 m mean camera position at 8
+  lanes (max 2-3 m), and more under more load. Each frame's own camera pose
+  is recorded, so the data is consistent; the frames are just not repeatable.
+* TMInterface's `autologin` is set to `1` (the first, account-less profile)
+  so the game reaches its menu on its own; `tmnf-collect kill` also removes
+  the Wine desktops; the in-game console is read through the Wayland
+  clipboard, which every instance shares, so `--log` is only trustworthy with
+  one lane.
+
+The controller's Windows-only parts (process discovery, window placement,
+the clipboard, junctions, `Program Files`) are isolated in `hostos.py`,
+`launcher.py`, `gamelog.py`, `userdirs.py` and `paths.py` behind
+`hostos.IS_WINDOWS`; on Windows nothing changed.
+
 ## Settings
 
 `tmnf-collect.yaml` in the working directory sets defaults for every command, so

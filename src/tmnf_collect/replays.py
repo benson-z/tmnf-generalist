@@ -18,12 +18,11 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .hostos import campaign_root
 from .paths import Layout, detect
 
 # Where stock maps live; user maps are found under the Tracks folder.
-CAMPAIGN_ROOT = Path(
-    r"C:\Program Files (x86)\TmNationsForever\GameData\Tracks\Campaigns"
-)
+CAMPAIGN_ROOT = campaign_root()
 
 _HEADER = re.compile(rb"<header\b.*?</header>", re.S)
 _HEADER_SCAN_BYTES = 65536

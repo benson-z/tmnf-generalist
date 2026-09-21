@@ -26,6 +26,7 @@ from pathlib import Path
 
 import yaml
 
+from .hostos import IS_WINDOWS, windows_path
 from .paths import Layout
 
 # Mirrored from the master on every start: the settings a person edits.
@@ -49,6 +50,10 @@ def _link_directory(link: Path, target: Path) -> None:
     if link.is_dir():
         return
     link.parent.mkdir(parents=True, exist_ok=True)
+    if not IS_WINDOWS:
+        # Wine follows symlinks like any other directory.
+        link.symlink_to(target, target_is_directory=True)
+        return
     result = subprocess.run(
         ["cmd", "/c", "mklink", "/J", str(link), str(target)],
         capture_output=True,
@@ -65,7 +70,7 @@ def _link_directory(link: Path, target: Path) -> None:
 def prepare(layout: Layout, instance_id: int, *, refresh: bool = False) -> Path:
     """Build (or reuse) the user directory for one instance."""
     target = root(layout) / str(instance_id)
-    if " " in str(target):
+    if " " in windows_path(target):
         # TMLoader passes profile args through unquoted, so a space would split
         # the switch in half.
         raise UserDirError(
@@ -114,7 +119,7 @@ def tmloader_profile(layout: Layout, instance_id: int, user_dir: Path) -> str:
     derived = {
         "program": base.get("program", {"id": layout.game}),
         "mods": base.get("mods", []),
-        "args": f"/userdir={user_dir}",
+        "args": f"/userdir={windows_path(user_dir)}",
     }
     (base_path.parent / f"{name}.yaml").write_text(
         yaml.safe_dump(derived, sort_keys=False), encoding="utf-8"

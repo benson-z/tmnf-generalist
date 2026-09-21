@@ -135,7 +135,7 @@ class Session:
                 f"game never reached the menu (state={self.game_state})"
             )
         if self.offscreen:
-            launcher.render_offscreen(self.instance.pid)
+            launcher.render_offscreen(self.instance.pid, slot=self.instance_id)
         self._drain(2.0)
 
         self.controller.configure(

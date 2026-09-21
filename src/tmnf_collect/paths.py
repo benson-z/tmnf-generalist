@@ -7,11 +7,15 @@ install; each value can be overridden with an environment variable.
 from __future__ import annotations
 
 import os
-import winreg
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+
+from .hostos import IS_WINDOWS, wine_user_dir
+
+if IS_WINDOWS:
+    import winreg
 
 
 def _env_path(name: str) -> Path | None:
@@ -20,6 +24,9 @@ def _env_path(name: str) -> Path | None:
 
 
 def _documents_dir() -> Path:
+    if not IS_WINDOWS:
+        # Wine's shell folders live in the prefix; the game never sees $HOME.
+        return wine_user_dir() / "Documents"
     # The Gbx games always use the shell "Personal" folder, not %USERPROFILE%\Documents,
     # which differ when OneDrive redirection is on.
     try:
@@ -62,10 +69,17 @@ def _find_tmloader() -> Path:
     override = _env_path("TMNF_TMLOADER_EXE")
     if override:
         return override
-    candidates = [
-        Path(os.environ.get("LOCALAPPDATA", "")) / "TMLoader" / "TMLoader.exe",
-        Path(os.environ.get("APPDATA", "")) / "TMLoader" / "TMLoader.exe",
-    ]
+    if IS_WINDOWS:
+        candidates = [
+            Path(os.environ.get("LOCALAPPDATA", "")) / "TMLoader" / "TMLoader.exe",
+            Path(os.environ.get("APPDATA", "")) / "TMLoader" / "TMLoader.exe",
+        ]
+    else:
+        appdata = wine_user_dir() / "AppData"
+        candidates = [
+            appdata / "Local" / "TMLoader" / "TMLoader.exe",
+            appdata / "Roaming" / "TMLoader" / "TMLoader.exe",
+        ]
     for candidate in candidates:
         if candidate.is_file():
             return candidate
