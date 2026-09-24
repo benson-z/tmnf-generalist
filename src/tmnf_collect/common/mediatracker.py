@@ -34,6 +34,8 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
+from . import lzo
+
 CLIPS_CHUNK = 0x03043021
 CLASS_MIN, CLASS_MAX = 0x03043000, 0x030430FF
 NULL_REF = b"\xff\xff\xff\xff"
@@ -45,8 +47,6 @@ class MediaTrackerError(RuntimeError):
 
 def _split(data: bytes) -> tuple[int, bytes]:
     """Header length and the decompressed body."""
-    import lzo
-
     if data[:3] != b"GBX":
         raise MediaTrackerError("not a Gbx file")
     offset = 3
@@ -79,8 +79,6 @@ def _split(data: bytes) -> tuple[int, bytes]:
 
 def strip_clips(data: bytes) -> tuple[bytes, int]:
     """Return the map with its MediaTracker clips removed, and bytes removed."""
-    import lzo
-
     head_end, body = _split(data)
     at = body.find(struct.pack("<I", CLIPS_CHUNK))
     if at < 0:

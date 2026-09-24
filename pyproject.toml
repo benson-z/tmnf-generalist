@@ -2,10 +2,11 @@
 name = "tmnf-collect"
 version = "0.1.0"
 description = "Scriptable TrackMania Nations Forever data collection for ML training"
-requires-python = ">=3.11,<3.12"  # pygbx needs python-lzo, newest wheels are cp311
+requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
     "pygbx>=0.3",
+    "lzokay>=2.1",  # LZO for Gbx bodies; see tmnf_collect.common.lzo
     "pillow>=10.0",
     "qoi>=0.7",          # lossless frame codec; see tmnf_collect.common.frames
     "zstandard>=0.22",   # packs the QOI stream, and releases the GIL
@@ -22,3 +23,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tmnf_collect"]
+
+[tool.uv]
+# pygbx requires python-lzo, whose newest wheels are cp311, so it would pin the
+# project to 3.11 and need liblzo2 to build anywhere else. tmnf_collect.common.lzo
+# stands in for it on top of lzokay; this marker never matches, so
+# python-lzo is never installed.
+override-dependencies = ["python-lzo; sys_platform == 'never'"]

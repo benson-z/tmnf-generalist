@@ -9,8 +9,6 @@ RUN dpkg --add-architecture i386 \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl wget gnupg unzip xz-utils procps less nano git \
-      # python-lzo (via pygbx) has no Linux wheel and builds against liblzo2
-      gcc libc6-dev liblzo2-dev \
       # headless Wayland desktop, X bridge for Wine, VNC + browser console
       sway xwayland wayvnc novnc python3-websockify foot wl-clipboard grim xdotool \
       # `tmnf-collect video` renders a recorded run back into a video
@@ -35,7 +33,7 @@ RUN mkdir -pm755 /etc/apt/keyrings \
 # and emissives fine, everything else unlit). Wine's own d3d9 over Mesa GL is
 # correct, and the community Linux guides run TMF on wined3d too.
 
-# uv + a managed Python 3.11 (pygbx needs python-lzo, whose newest wheels are cp311)
+# uv + a managed Python
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     UV_PYTHON_PREFERENCE=only-managed \

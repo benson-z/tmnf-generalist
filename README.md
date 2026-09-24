@@ -21,9 +21,8 @@ How it works, and why it works that way, is in [outline.md](outline.md).
 ## Requirements
 
 **Windows:** TrackMania Nations Forever, TrackMania ModLoader (TMLoader) with a
-profile that has TMInterface 2.2+ enabled, Python 3.11 and
-[uv](https://docs.astral.sh/uv/). Python is pinned to 3.11 because `pygbx`
-needs `python-lzo`, whose newest wheels are cp311.
+profile that has TMInterface 2.2+ enabled, Python 3.11+ and
+[uv](https://docs.astral.sh/uv/).
 
 **Linux:** just Docker and a GPU render node (`/dev/dri`). The game, TMLoader
 and TMInterface run under Wine inside the container. See [Linux](#linux) below.

@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..common import lzo
 from ..common import replays as replay_files
 
 KEYBOARD = "keyboard"
@@ -27,6 +28,7 @@ UNREADABLE = "unreadable"
 
 def classify_replay(path: Path) -> str | None:
     """Classify a replay by reading its ghost. None if it cannot be read."""
+    lzo.register()  # pygbx imports python-lzo by name; see common.lzo
     from pygbx import Gbx, GbxType
 
     try:
