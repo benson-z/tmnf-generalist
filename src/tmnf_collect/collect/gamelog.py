@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import time
 
-from .hostos import IS_WINDOWS
+from ..common.hostos import IS_WINDOWS
 
 if IS_WINDOWS:
     import ctypes

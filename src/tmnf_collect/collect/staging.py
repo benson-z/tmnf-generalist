@@ -15,9 +15,9 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from . import mediatracker
-from .hostos import campaign_root
-from .paths import Layout, detect
+from ..common import mediatracker
+from ..common.hostos import campaign_root
+from ..common.paths import Layout, detect
 
 STAGE_DIR = "tmnf-collect"
 

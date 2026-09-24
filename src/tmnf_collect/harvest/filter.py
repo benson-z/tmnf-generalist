@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import replays as replay_files
+from ..common import replays as replay_files
 
 KEYBOARD = "keyboard"
 PAD = "pad"

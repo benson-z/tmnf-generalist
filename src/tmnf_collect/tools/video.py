@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from . import frames as frames_mod
+from ..common import frames as frames_mod
 
 STEER_FULL = 65536  # analog steer range is [-65536, 65536]
 

@@ -14,21 +14,17 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn
 
-from . import (
-    config as config_mod,
-    collect as collect_mod,
-    inputs as inputs_mod,
-    install,
-    launcher,
-    smoke,
-    stats as stats_mod,
-    tmx,
-    verify,
-    video,
-)
-from .paths import detect
-from . import frames as frames_mod
-from . import staging
+from . import config as config_mod
+from .bench import matrix as matrix_mod
+from .bench import throughput as throughput_mod
+from .collect import install, launcher, smoke, staging
+from .collect import runner as collect_mod
+from .common import frames as frames_mod
+from .common.paths import detect
+from .harvest import filter as filter_mod
+from .harvest import tmx
+from .tools import stats as stats_mod
+from .tools import verify, video
 
 # Set when the parser is built; used to record what a run was configured with.
 _COLLECT_PARSER: argparse.ArgumentParser | None = None
@@ -203,6 +199,13 @@ def _cmd_install_plugin(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fetch_tmx_map(map_uid: str, into: Path) -> Path | None:
+    try:
+        return tmx.fetch_map(map_uid, into)
+    except tmx.TmxError as exc:
+        raise collect_mod.MapFetchError(str(exc)) from exc
+
+
 def _cmd_collect(args: argparse.Namespace) -> int:
     # Config-file defaults bypass argparse's type converter.
     args.speed = _collect_speed(args.speed)
@@ -226,13 +229,12 @@ def _cmd_collect(args: argparse.Namespace) -> int:
             camera=args.camera,
             speed=args.speed,
             offscreen=args.offscreen,
-            reset_camera=args.reset_camera,
             instance_base=args.instance_base,
             claims=args.claims,
             budget_hours=args.budget_hours,
             settings=config_mod.effective(args, _COLLECT_PARSER),
             strip_intros=not args.keep_intros,
-            fetch_maps=args.fetch_maps,
+            fetch_map=_fetch_tmx_map if args.fetch_maps else None,
             limit=args.limit,
             codec=args.frame_codec,
             capture_log=args.log,
@@ -250,7 +252,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
 
 
 def _cmd_filter(args: argparse.Namespace) -> int:
-    result = inputs_mod.filter_replays(
+    result = filter_mod.filter_replays(
         Path(args.replays),
         want=args.inputs,
         max_seconds=args.max_seconds,
@@ -424,6 +426,62 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
     return 0 if summary["samples"] else 1
 
 
+def _cmd_bench_matrix(args: argparse.Namespace) -> int:
+    try:
+        speeds = [float(value) for value in str(args.speeds).split(",")]
+        summaries = matrix_mod.run(
+            Path(args.replay),
+            Path(args.out),
+            instances=args.instances,
+            speeds=speeds,
+            port=args.port,
+            instance_base=args.instance_base,
+            stagger=args.stagger,
+            reference=Path(args.reference) if args.reference else None,
+            width=args.width,
+            height=args.height,
+            camera=args.camera,
+            offscreen=args.offscreen,
+        )
+    except ValueError as exc:
+        print(f"bench-matrix: {exc}")
+        return 2
+    print(json.dumps(summaries, indent=2))
+    return 0 if all(s["passed"] == s["runs"] for s in summaries) else 1
+
+
+def _cmd_bench_throughput(args: argparse.Namespace) -> int:
+    try:
+        conditions = [
+            throughput_mod.parse_condition(text)
+            for text in (args.condition or ["1:6", "2:8", "1:8"])
+        ]
+    except ValueError as exc:
+        print(f"bench-throughput: {exc}")
+        return 2
+    # The collect subprocesses must see the same install and settings file.
+    global_args = ["--game", args.game]
+    if args.profile:
+        global_args += ["--profile", args.profile]
+    if args.config:
+        global_args += ["--config", args.config]
+    summary = throughput_mod.run(
+        Path(args.replays),
+        Path(args.out),
+        conditions,
+        global_args=global_args,
+        collect_args=args.collect_args,
+    )
+    print()
+    print(throughput_mod.format_table(summary))
+    return 0
+
+
+# `collect` settings that bench-matrix records with too, so by default it
+# measures the capture a real collection would do.
+_MATRIX_FROM_COLLECT = ("width", "height", "camera", "offscreen")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="tmnf-collect")
     parser.add_argument("--game", default="TmForever")
@@ -499,7 +557,7 @@ def main(argv: list[str] | None = None) -> int:
         "--frame-codec",
         default=frames_mod.LOSSLESS,
         choices=[frames_mod.LOSSLESS],
-        help="how frames are stored on disk; see tmnf_collect.frames",
+        help="how frames are stored on disk; see tmnf_collect.common.frames",
     )
     p_collect.add_argument(
         "--instances",
@@ -565,16 +623,6 @@ def main(argv: list[str] | None = None) -> int:
         "--show-ui",
         action="store_true",
         help="keep the in-game speedometer and clock in the frames",
-    )
-    p_collect.add_argument(
-        "--reset-camera",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "snap the chase camera to the car at every sample point, so the "
-            "frame for a given car state is the same in every run; the game "
-            "otherwise smooths the camera on wall-clock time"
-        ),
     )
     p_collect.add_argument(
         "--offscreen",
@@ -715,8 +763,8 @@ def main(argv: list[str] | None = None) -> int:
     p_filter.add_argument("replays", help="a folder of replays to sort in place")
     p_filter.add_argument(
         "--inputs",
-        default=inputs_mod.KEYBOARD,
-        choices=[inputs_mod.KEYBOARD, inputs_mod.PAD],
+        default=filter_mod.KEYBOARD,
+        choices=[filter_mod.KEYBOARD, filter_mod.PAD],
         help="which device to keep; everything else is moved aside",
     )
     p_filter.add_argument(
@@ -729,6 +777,59 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="report without moving anything"
     )
     p_filter.set_defaults(func=_cmd_filter)
+
+    p_matrix = sub.add_parser(
+        "bench-matrix",
+        help="check which speed/instance settings reproduce a replay exactly",
+    )
+    p_matrix.add_argument("replay", help="one replay, recorded by every instance")
+    p_matrix.add_argument("--out", default="out/bench-matrix")
+    p_matrix.add_argument("--instances", type=int, default=1)
+    p_matrix.add_argument(
+        "--speeds", default="1,2", help="comma-separated, each from 1 to 5"
+    )
+    p_matrix.add_argument("--port", type=int, default=8520)
+    p_matrix.add_argument("--instance-base", type=int, default=30)
+    p_matrix.add_argument(
+        "--stagger", type=float, default=8.0, help="seconds between launches"
+    )
+    p_matrix.add_argument(
+        "--reference",
+        default=None,
+        help=(
+            "a run directory to compare inputs and positions against; defaults "
+            "to this matrix's own 1x run when there is one instance"
+        ),
+    )
+    p_matrix.add_argument("--width", type=int, default=320)
+    p_matrix.add_argument("--height", type=int, default=240)
+    p_matrix.add_argument("--camera", type=int, default=1)
+    p_matrix.add_argument(
+        "--offscreen", action=argparse.BooleanOptionalAction, default=True
+    )
+    p_matrix.set_defaults(func=_cmd_bench_matrix)
+
+    p_throughput = sub.add_parser(
+        "bench-throughput",
+        help="time the real collect command under several speed/lane settings",
+        epilog="flags after -- go to every collect run, e.g. -- --limit 20",
+    )
+    p_throughput.add_argument(
+        "replays", help="folder of replays to record in every condition"
+    )
+    p_throughput.add_argument("--out", default="out/bench-throughput")
+    p_throughput.add_argument(
+        "--condition",
+        action="append",
+        default=None,
+        help=(
+            "speed:lanes, repeatable (default 1:6, 2:8, 1:8); the first is "
+            "the camera reference"
+        ),
+    )
+    # Anything after `--` is split off in main() and handed to every collect
+    # run; argparse cannot take it as a positional once options intervene.
+    p_throughput.set_defaults(func=_cmd_bench_throughput, collect_args=[])
 
     parser.add_argument(
         "--config",
@@ -747,6 +848,8 @@ def main(argv: list[str] | None = None) -> int:
         "harvest": p_harvest,
         "filter": p_filter,
         "smoke": p_smoke,
+        "bench-matrix": p_matrix,
+        "bench-throughput": p_throughput,
     }
     try:
         explicit = None
@@ -755,10 +858,24 @@ def main(argv: list[str] | None = None) -> int:
         elif "--config" in sys.argv:
             explicit = sys.argv[sys.argv.index("--config") + 1]
         source = config_mod.find(explicit)
-        config_mod.apply(config_mod.load(source), known, source=source)
+        loaded = config_mod.load(source)
+        from_collect = loaded.get("collect") or {}
+        p_matrix.set_defaults(
+            **{k: from_collect[k] for k in _MATRIX_FROM_COLLECT if k in from_collect}
+        )
+        config_mod.apply(loaded, known, source=source)
     except (config_mod.ConfigError, IndexError) as exc:
         print(f"config: {exc}")
         return 2
 
-    args = parser.parse_args(argv)
+    words = list(sys.argv[1:] if argv is None else argv)
+    passthrough: list[str] = []
+    if "--" in words:
+        split = words.index("--")
+        words, passthrough = words[:split], words[split + 1 :]
+    args = parser.parse_args(words)
+    if passthrough:
+        if args.command != "bench-throughput":
+            parser.error("only bench-throughput takes flags after --")
+        args.collect_args = passthrough
     return args.func(args)

@@ -20,12 +20,23 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import install, replays, staging, tmx
+from ..common import replays
+from ..common.frames import LOSSLESS
+from ..common.paths import Layout, detect
+from ..common.replays import ChallengeIndex, ReplayError, ReplayInfo
+from . import install, staging
 from .dataset import RunWriter
-from .frames import LOSSLESS
-from .paths import Layout, detect
-from .replays import ChallengeIndex, ReplayError, ReplayInfo
 from .session import NoInputsError, Session, SessionError
+
+
+class MapFetchError(Exception):
+    """A map fetcher tried and failed, as opposed to finding no such map."""
+
+
+# Downloads the map with this UID into the folder, or returns None if the
+# source does not have it. Collection takes one as a parameter rather than
+# importing a source, so it does not care where maps come from.
+MapFetcher = Callable[[str, Path], Path | None]
 
 
 @dataclass
@@ -104,7 +115,7 @@ def plan(
     *,
     layout: Layout | None = None,
     index: ChallengeIndex | None = None,
-    fetch_maps: bool = False,
+    fetch_map: MapFetcher | None = None,
     strip_intros: bool = False,
 ) -> Plan:
     """Resolve maps and stage every file.
@@ -133,14 +144,12 @@ def plan(
             continue
 
         challenge = index.find(info.map_uid)
-        if challenge is None and fetch_maps:
+        if challenge is None and fetch_map is not None:
             # A replay names its map only by UID, and one downloaded from TMX
             # rarely arrives with the map beside it.
             try:
-                challenge = tmx.fetch_map(
-                    info.map_uid, staging.challenges_dir(layout)
-                )
-            except tmx.TmxError as exc:
+                challenge = fetch_map(info.map_uid, staging.challenges_dir(layout))
+            except MapFetchError as exc:
                 result.skipped.append(
                     {
                         "replay": str(path),
@@ -150,10 +159,10 @@ def plan(
                 continue
         if challenge is None:
             reason = f"no local map with UID {info.map_uid}"
-            if not fetch_maps:
+            if fetch_map is None:
                 reason += " (try --fetch-maps)"
             else:
-                reason += " and TMX does not have it either"
+                reason += " and the map source does not have it either"
             result.skipped.append({"replay": str(path), "reason": reason})
             continue
 
@@ -290,7 +299,7 @@ def run_job(
                     "frame_size": [session.width, session.height],
                     "frame_codec": codec,
                     "hide_ui": session.hide_ui,
-                    "reset_camera": session.reset_camera,
+                    "reset_camera": True,  # the plugin always does now
                 }
             )
     except (SessionError, OSError, ConnectionError) as exc:
@@ -442,7 +451,6 @@ def _worker(
     camera: int | None,
     speed: float,
     offscreen: bool,
-    reset_camera: bool,
     codec: str,
     retries: int,
     capture_log: bool,
@@ -473,7 +481,6 @@ def _worker(
             camera=camera,
             speed=speed,
             offscreen=offscreen,
-            reset_camera=reset_camera,
         )
         session.start()
         session.prepare(hide_console=hide_console)
@@ -628,7 +635,6 @@ def _process_lane(
     camera: int | None,
     speed: float,
     offscreen: bool,
-    reset_camera: bool,
     codec: str,
     retries: int,
     capture_log: bool,
@@ -656,7 +662,6 @@ def _process_lane(
             camera=camera,
             speed=speed,
             offscreen=offscreen,
-            reset_camera=reset_camera,
         )
         session.start()
         session.prepare(hide_console=hide_console)
@@ -756,7 +761,6 @@ def _run_process_pool(
     camera: int | None,
     speed: float,
     offscreen: bool,
-    reset_camera: bool,
     codec: str,
     retries: int,
     capture_log: bool,
@@ -792,7 +796,6 @@ def _run_process_pool(
         "camera": camera,
         "speed": speed,
         "offscreen": offscreen,
-        "reset_camera": reset_camera,
         "codec": codec,
         "retries": retries,
         "capture_log": capture_log,
@@ -1003,13 +1006,12 @@ def collect(
     camera: int | None = None,
     speed: float = 1.0,
     offscreen: bool = True,
-    reset_camera: bool = False,
     instance_base: int = 0,
     claims: bool = False,
     budget_hours: float | None = None,
     settings: dict | None = None,
     strip_intros: bool = False,
-    fetch_maps: bool = False,
+    fetch_map: MapFetcher | None = None,
     limit: int | None = None,
     codec: str = LOSSLESS,
     capture_log: bool = False,
@@ -1051,7 +1053,7 @@ def collect(
     if limit is not None:
         paths = paths[:limit]
     prepared = plan(
-        paths, layout=layout, fetch_maps=fetch_maps, strip_intros=strip_intros
+        paths, layout=layout, fetch_map=fetch_map, strip_intros=strip_intros
     )
 
     jobs = prepared.jobs
@@ -1104,7 +1106,6 @@ def collect(
             camera=camera,
             speed=speed,
             offscreen=offscreen,
-            reset_camera=reset_camera,
             codec=codec,
             retries=retries,
             capture_log=capture_log,
@@ -1148,7 +1149,6 @@ def collect(
                         camera=camera,
                         speed=speed,
                         offscreen=offscreen,
-                        reset_camera=reset_camera,
                         codec=codec,
                         claims=claims_dir,
                         all_jobs=jobs,

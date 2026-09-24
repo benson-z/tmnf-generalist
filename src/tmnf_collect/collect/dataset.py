@@ -29,7 +29,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from .frames import LOSSLESS, Encoder
+from ..common.frames import LOSSLESS, Encoder
 from .protocol import Sample, Tick
 
 

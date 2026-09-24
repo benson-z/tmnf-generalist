@@ -16,13 +16,6 @@ collect:
   processes: 8
   speed: 2
 
-  # The frame for a given car state is then the same in every run: 16678 of
-  # 16680 samples had a byte-identical camera pose across two runs (the two
-  # that differed were finish ticks, where the game switches camera). Without
-  # this the chase camera is smoothed on wall-clock time, and two runs of the
-  # same replay differed by 1.2 m mean camera position at 2x.
-  reset_camera: true
-
   camera: 1
   width: 320
   height: 240

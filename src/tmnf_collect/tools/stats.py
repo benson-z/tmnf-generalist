@@ -17,7 +17,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import tmx
+from ..harvest import tmx
 
 # Harvested maps are filed under their TMX id, which is the only handle a
 # recorded run keeps on where it came from.

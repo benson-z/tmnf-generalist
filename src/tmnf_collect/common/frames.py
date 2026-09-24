@@ -2,8 +2,9 @@
 
 The plugin sends raw BGRA. What that turns into is paid for three times: encode
 time on the writer thread, bytes on disk, and decode time on every training
-epoch. Measured on 200 real 320x240 frames straight out of the game
-(`experiments/frame_codec_bench.py`):
+epoch. Measured on 200 real 320x240 frames straight out of the game (the
+benchmark script is in git history, `experiments/frame_codec_bench.py` as of
+bcc828e):
 
     codec              size   1 thread   8 threads  scaling   decode
     qoi + zstd-6      70.0KB    ~590/s      3669/s     ~6x      0.9ms

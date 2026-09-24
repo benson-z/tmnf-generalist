@@ -13,10 +13,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..common.paths import Layout, detect
 from . import gamelog, launcher, staging, userdirs
 from .controller import Controller
 from .launcher import GameInstance
-from .paths import Layout, detect
 from .protocol import (
     EV_FINISH,
     EV_GAMESTATE,
@@ -87,7 +87,6 @@ class Session:
         camera: int = 1,
         speed: float = 1.0,
         offscreen: bool = True,
-        reset_camera: bool = False,
     ) -> None:
         if not math.isfinite(speed) or not 1 <= speed <= 5:
             raise ValueError("speed must be finite and between 1 and 5")
@@ -101,7 +100,6 @@ class Session:
         self.camera = camera
         self.speed = speed
         self.offscreen = offscreen
-        self.reset_camera = reset_camera
 
         self.controller: Controller | None = None
         self.instance: GameInstance | None = None
@@ -148,7 +146,6 @@ class Session:
             hide_ui=self.hide_ui,
             frame_barrier=self.speed > 1,
             speed=self.speed,
-            reset_camera=self.reset_camera,
         )
 
     def close(self) -> None:
@@ -315,6 +312,14 @@ class Session:
         if hide_console and not self._console_hidden:
             self._command("toggle_console")
             self._console_hidden = True
+
+    def set_speed(self, speed: float) -> None:
+        """Change game speed between runs, as `start` and `prepare` set it."""
+        if not math.isfinite(speed) or not 1 <= speed <= 5:
+            raise ValueError("speed must be finite and between 1 and 5")
+        self.speed = speed
+        self._command(f"set speed {speed}")
+        self._ctrl.configure(frame_barrier=speed > 1, speed=speed)
 
     def dump_inputs(
         self, staged_replay: str, script_name: str, *, timeout: float = 25.0

@@ -65,6 +65,19 @@ Sampling lives in an AngelScript plugin loaded by TMInterface:
 The Python side owns the queue: it resolves and stages files, launches the
 game, feeds replays to it one after another, and writes the dataset.
 
+The package under `src/tmnf_collect/` is split by job:
+
+* `collect/` drives the game: launching instances, the plugin bridge,
+  re-driving replays and writing runs to disk.
+* `harvest/` builds the replay corpus: downloading from TMX (`harvest`) and
+  sorting by input device (`filter`). Nothing in `collect/` imports it; the CLI
+  hands collection a TMX map fetcher when `--fetch-maps` is set.
+* `tools/` works on a recorded dataset: `verify`, `clean`, `stats`, `video`.
+* `bench/` measures collection settings on this machine: `bench-matrix` and
+  `bench-throughput`.
+* `common/` is what more than one of those needs: Gbx header reading, the
+  frame codec, map intro stripping, and install/host discovery.
+
 ## Requirements
 
 * TrackMania Nations Forever and TrackMania ModLoader (TMLoader), with a
@@ -86,6 +99,8 @@ uv run tmnf-collect stats <dir>     # graph run lengths and map tags
 uv run tmnf-collect video <run>     # replay one run as annotated video
 uv run tmnf-collect harvest         # pick maps on TMX and fetch demos
 uv run tmnf-collect filter <dir>    # sort replays by input device
+uv run tmnf-collect bench-matrix <r> # does a setting reproduce exactly
+uv run tmnf-collect bench-throughput <dir>  # what a setting is worth
 uv run tmnf-collect kill            # stop every running instance
 ```
 
@@ -136,7 +151,7 @@ selects through `TMNF_CONFIG`:
   every sample point, the plugin rewound it, and re-applying inputs around
   that rewind shifted transitions by a tick: 3 of 20 replays diverged at 2x.
   10 lanes drop frames, 12 drop many; the CPU is the limit.
-* **`reset_camera: true` makes frames reproducible.** The chase camera is
+* **Resetting the camera makes frames reproducible.** The chase camera is
   smoothed on wall-clock time, so with byte-identical car trajectories two
   runs of the same replay still differed by 1.2 m mean camera position at
   2x. Snapping the camera to the car at every sample point (the same
@@ -144,8 +159,8 @@ selects through `TMNF_CONFIG`:
   16680 samples across two runs; the two others were finish ticks, where
   the game switches camera. The camera then sits at a fixed offset rather
   than lagging on acceleration, which is a different look from the natural
-  chase cam, so it is a setting rather than the rule; whatever is chosen has
-  to be the same at RL time.
+  chase cam, and RL-time inference has to reset it the same way. The
+  collector always does this, on Windows too.
 * TMInterface's `autologin` is set to `1` (the first, account-less profile)
   so the game reaches its menu on its own; `tmnf-collect kill` also removes
   the Wine desktops; the in-game console is read through the Wayland
@@ -153,9 +168,9 @@ selects through `TMNF_CONFIG`:
   one lane. `tmnf-collect video` works in the container (ffmpeg is there).
 
 The controller's Windows-only parts (process discovery, window placement,
-the clipboard, junctions, `Program Files`) are isolated in `hostos.py`,
-`launcher.py`, `gamelog.py`, `userdirs.py` and `paths.py` behind
-`hostos.IS_WINDOWS`; on Windows nothing changed.
+the clipboard, junctions, `Program Files`) are isolated in `common/hostos.py`,
+`common/paths.py`, `collect/launcher.py`, `collect/gamelog.py` and
+`collect/userdirs.py` behind `hostos.IS_WINDOWS`; on Windows nothing changed.
 
 ## Settings
 
@@ -356,7 +371,7 @@ why a run misbehaved.
 ### Driving an instance from Python
 
 ```python
-from tmnf_collect.session import Session
+from tmnf_collect.collect.session import Session
 
 with Session(port=8477, width=320, height=240, speed=1.0) as session:
     session.prepare()
@@ -412,7 +427,7 @@ apply to intros. A real keystroke works but only reaches the foreground window,
 which cannot survive parallel instances.
 
 So the clips come out of the staged copy of the map instead --
-`mediatracker.py`, on by default, `--keep-intros` to opt out. The map keeps its
+`common/mediatracker.py`, on by default, `--keep-intros` to opt out. The map keeps its
 UID and its blocks, so it is still the map its replay was driven on. Checked on
 465 maps: all stripped, all UIDs preserved, 27.6 MB of MediaTracker removed, one
 map being 959 KB of intro out of 981 KB. It also removes the in-race clips that
@@ -529,6 +544,20 @@ The collector therefore requires one instance above 2x. A single-instance
 sweep also passed 6x and 10x but failed 8x, 15x, and 20x, so the supported
 single-instance maximum remains 5x.
 
+To re-measure on new hardware, `bench-matrix` checks whether a setting still
+reproduces a replay exactly, and `bench-throughput` times the real `collect`
+command under each setting and verifies what it wrote:
+
+```bash
+uv run tmnf-collect bench-matrix testdata/replays12/A07-Race.Replay.gbx --instances 8 --speeds 1,2
+uv run tmnf-collect bench-throughput testdata/corpus --condition 1:8 --condition 2:8 -- --limit 20
+```
+
+`bench-matrix` records with the `collect` section's width, height, camera and
+camera reset unless told otherwise; `bench-throughput` runs `collect` itself, so
+it reads the whole config file. Run the matrix several times before trusting an
+edge setting: failures there come and go by one physics step.
+
 Recording also checks that the car is actually moving, and re-arms the run if
 it is not, so a stationary run can never be written out as if it were real.
 
@@ -596,10 +625,10 @@ supported speedup therefore waits for ordinary `Render()` callbacks and does
 not patch TMInterface or request an OS repaint. The camera pose is recorded on
 every sample so the remaining variation is visible.
 
-`--reset-camera` opts into that same reset deliberately, at every sample point.
+The collector now makes that same reset deliberately, at every sample point.
 It trades the natural camera for a reproducible one: the pose becomes a
 function of the car state alone (byte-identical across runs on all but the
-finish tick), at a fixed offset instead of the smoothed lag. Worth it where the
-natural camera's own run-to-run variation is large — under Wine with eight
-instances it was 0.45 m mean, not the 0.05 m measured on Windows — and only if
-RL-time inference resets the camera the same way, as Linesight does.
+finish tick), at a fixed offset instead of the smoothed lag. The natural
+camera's own run-to-run variation was too large to keep — under Wine with
+eight instances it was 0.45 m mean, not the 0.05 m measured on Windows — so
+RL-time inference must reset the camera the same way, as Linesight does.

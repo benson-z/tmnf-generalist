@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..common.paths import detect
 from . import install, staging
-from .paths import detect
 from .protocol import Sample
 from .session import Session
 

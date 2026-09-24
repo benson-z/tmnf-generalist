@@ -1,19 +1,22 @@
-"""End-to-end throughput benchmark for the frame-barrier branch.
+"""What a collection setting is worth, end to end.
 
-`speed_instance_matrix.py` answers whether a setting reproduces a replay. This
-answers the other half: what a setting is worth. It runs the *production*
-collect command over the same fixed set of replays under several
-speed/instance settings, times each one, then verifies what landed on disk and
-compares the camera track against the natural-speed condition.
+`matrix` answers whether a setting reproduces a replay. This answers the other
+half: it runs the *production* `collect` command over the same fixed set of
+replays under several speed/lane settings, times each one, then verifies what
+landed on disk and compares the camera track against the first condition.
+
+Each condition runs as its own `tmnf-collect collect` subprocess, so it picks
+up the same config file a real collection would; only speed and lane count
+(and any extra flags given) are overridden.
 
 Throughput is reported as recorded gameplay seconds per wall second, which is
 the only figure that translates into "hours of training data per hour of
 machine". Correctness is reported beside it because a fast setting that loses
 runs is slower, not faster.
 """
+
 from __future__ import annotations
 
-import argparse
 import json
 import math
 import subprocess
@@ -21,32 +24,52 @@ import sys
 import time
 from pathlib import Path
 
-from tmnf_collect.verify import check_dataset
+from ..collect import launcher
+from ..tools.verify import check_dataset
 
-REPO = Path(__file__).resolve().parent.parent
-# `tmnf_collect.cli` has no __main__ guard, so `-m` imports it and exits.
-CLI = [sys.executable, "-c", "from tmnf_collect.cli import main; raise SystemExit(main())"]
+CLI = [sys.executable, "-m", "tmnf_collect"]
+
+
+def parse_condition(text: str) -> tuple[float, int]:
+    """``"2:8"`` -> speed 2, 8 lanes."""
+    speed_text, sep, lanes_text = text.partition(":")
+    if not sep:
+        raise ValueError(f"condition {text!r} should be speed:lanes, e.g. 2:8")
+    speed, lanes = float(speed_text), int(lanes_text)
+    if lanes < 1:
+        raise ValueError(f"condition {text!r} needs at least one lane")
+    return speed, lanes
 
 
 def _run_collect(
-    replays: Path, out: Path, *, speed: float, instances: int, extra: list[str]
+    replays: Path,
+    out: Path,
+    *,
+    speed: float,
+    lanes: int,
+    global_args: list[str],
+    collect_args: list[str],
 ) -> tuple[dict, float]:
     command = [
-        *CLI, "collect", str(replays),
+        *CLI, *global_args, "collect", str(replays),
         "--out", str(out),
-        "--speed", str(speed),
-        "--instances", str(instances),
+        "--speed", f"{speed:g}",
+        # Both, so the condition wins whichever lane mode the config selects.
+        "--processes", str(lanes),
+        "--instances", str(lanes),
         "--no-resume",
-        *extra,
+        *collect_args,
     ]
+    # collect exits 1 when any run errored, which is a result to measure, not a
+    # reason to stop; only a missing index means the condition never ran.
+    (out / "index.json").unlink(missing_ok=True)
     started = time.monotonic()
-    completed = subprocess.run(command, cwd=REPO, text=True, capture_output=True)
+    completed = subprocess.run(command, text=True, capture_output=True)
     wall = time.monotonic() - started
-    if completed.returncode != 0:
-        raise SystemExit(
-            f"collect failed ({completed.returncode}) for speed {speed} "
-            f"instances {instances}:\n{completed.stdout[-4000:]}\n"
-            f"{completed.stderr[-4000:]}"
+    if completed.returncode != 0 and not (out / "index.json").is_file():
+        raise RuntimeError(
+            f"collect failed ({completed.returncode}) at {speed:g}x with "
+            f"{lanes} lanes:\n{completed.stdout[-4000:]}\n{completed.stderr[-4000:]}"
         )
     index = json.loads((out / "index.json").read_text(encoding="utf-8"))
     return index, wall
@@ -142,39 +165,41 @@ def _measure(index: dict, wall: float, out: Path) -> dict:
     }
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "replays", help="folder of replays to record in every condition"
-    )
-    parser.add_argument("--out", default="out/throughput-bench")
-    parser.add_argument(
-        "--condition", action="append", default=None,
-        help="speed:instances, repeatable; the first one is the camera reference",
-    )
-    parser.add_argument("--width", type=int, default=160)
-    parser.add_argument("--height", type=int, default=120)
-    args = parser.parse_args(argv)
+def run(
+    replays: Path,
+    out_root: Path,
+    conditions: list[tuple[float, int]],
+    *,
+    global_args: list[str] | None = None,
+    collect_args: list[str] | None = None,
+) -> dict:
+    """Collect ``replays`` once per (speed, lanes) condition and measure each.
 
-    conditions = args.condition or ["1:6", "2:8", "1:8"]
-    out_root = Path(args.out)
+    The first condition is the camera reference for the others. The summary is
+    also written to ``out_root/benchmark.json``.
+    """
     out_root.mkdir(parents=True, exist_ok=True)
-    extra = ["--width", str(args.width), "--height", str(args.height)]
-
     measured: dict[str, dict] = {}
     reference_dir: Path | None = None
-    for condition in conditions:
-        speed_text, _, instance_text = condition.partition(":")
-        speed, instances = float(speed_text), int(instance_text)
-        name = f"{speed:g}x-{instances}i"
+    for speed, lanes in conditions:
+        name = f"{speed:g}x-{lanes}i"
         out = out_root / name
         print(f"=== {name} ===", flush=True)
-        index, wall = _run_collect(
-            Path(args.replays), out, speed=speed, instances=instances, extra=extra
-        )
+        try:
+            index, wall = _run_collect(
+                replays,
+                out,
+                speed=speed,
+                lanes=lanes,
+                global_args=global_args or [],
+                collect_args=collect_args or [],
+            )
+        finally:
+            # A failed condition must not leave games running into the next.
+            launcher.kill_all()
         entry = _measure(index, wall, out)
         entry["speed"] = speed
-        entry["instances"] = instances
+        entry["instances"] = lanes
         if reference_dir is None:
             reference_dir = out
             entry["camera_vs_reference"] = "reference"
@@ -182,29 +207,26 @@ def main(argv: list[str] | None = None) -> int:
             entry["camera_vs_reference"] = _compare_cameras(out, reference_dir)
         measured[name] = entry
         print(json.dumps(entry, indent=2), flush=True)
-        subprocess.run(
-            [*CLI, "kill"],
-            cwd=REPO, capture_output=True, text=True,
-        )
 
     summary = {
-        "replays": str(args.replays),
-        "reference": conditions[0],
+        "replays": str(replays),
+        "reference": next(iter(measured), None),
         "conditions": measured,
     }
     (out_root / "benchmark.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
+    return summary
 
-    print()
+
+def format_table(summary: dict) -> str:
     header = (
         f"{'condition':12} {'wall':>7} {'ok':>8} {'gameplay':>9} "
         f"{'x-real':>7} {'x-busy':>7} {'verify':>8} {'on-tick':>9} "
         f"{'cam vs ref':>11}"
     )
-    print(header)
-    print("-" * len(header))
-    for name, entry in measured.items():
+    lines = [header, "-" * len(header)]
+    for name, entry in summary["conditions"].items():
         camera = entry["camera_vs_reference"]
         camera_text = (
             "reference" if camera == "reference"
@@ -215,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             if entry["frames"] else "-"
         )
         checked = entry["verify_passed"] + entry["verify_failed"]
-        print(
+        lines.append(
             f"{name:12} {entry['wall_seconds']:6.0f}s "
             f"{entry['ok']:3d}/{entry['replays']:<4d} "
             f"{entry['gameplay_seconds']:8.0f}s {entry['throughput_x']:6.2f}x "
@@ -223,8 +245,4 @@ def main(argv: list[str] | None = None) -> int:
             f"{entry['verify_passed']:3d}/{checked:<4d} "
             f"{on_tick:>9} {camera_text:>11}"
         )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    return "\n".join(lines)

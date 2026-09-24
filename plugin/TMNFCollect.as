@@ -70,10 +70,6 @@ bool g_frameHeld = false;
 float g_speed = 1.0f;
 // Ticks that ran anyway while held: should stay at zero.
 int g_heldTicks = 0;
-// Snap the chase camera to the car at each sample point. The game smooths it
-// on wall-clock time, so without this the frame for a given car state depends
-// on frame pacing and is not reproducible.
-bool g_resetCamera = false;
 int p_raceTime = 0;
 uint p_displaySpeed = 0;
 float p_velX = 0, p_velY = 0, p_velZ = 0;
@@ -269,8 +265,6 @@ void ApplyConfigEntry(const string&in entry)
         g_frameBarrier = (value == "1");
     } else if (key == "speed") {
         g_speed = Text::ParseFloat(value);
-    } else if (key == "reset_camera") {
-        g_resetCamera = (value == "1");
     } else if (key == "hide_ui") {
         g_hideUi = (value == "1");
         ApplyRaceInterface();
@@ -443,6 +437,9 @@ void OnRunStep(SimulationManager@ sim)
     // sample point, that sample never became a frame.
     if (g_pending) g_dropped++;
 
+    // Every sample point also snaps the chase camera to the car. The game
+    // smooths it on wall-clock time, so without this the frame for a given
+    // car state depends on frame pacing and is not reproducible.
     if (g_frameBarrier) {
         // A rewind to the state the game is already in changes no physics.
         // What it does is drop the ticks the loop had still queued for this
@@ -451,7 +448,7 @@ void OnRunStep(SimulationManager@ sim)
         // the input state, so this tick's own inputs go back in; those are
         // the values already in effect, not a shifted transition.
         InputState inputs = sim.GetInputState();
-        sim.RewindToState(sim.SaveState(), g_resetCamera);
+        sim.RewindToState(sim.SaveState(), true);
         sim.SetInputState(InputType::Gas, inputs.Gas);
         sim.SetInputState(InputType::Steer, inputs.Steer);
         sim.SetInputState(InputType::Up, inputs.Up ? 1 : 0);
@@ -460,7 +457,7 @@ void OnRunStep(SimulationManager@ sim)
         sim.SetInputState(InputType::Right, inputs.Right ? 1 : 0);
         sim.SetSpeed(0.0f);
         g_frameHeld = true;
-    } else if (g_resetCamera) {
+    } else {
         sim.ResetCamera();
     }
     StashTelemetry(sim, raceTime);

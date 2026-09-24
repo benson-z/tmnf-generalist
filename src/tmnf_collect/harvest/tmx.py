@@ -24,7 +24,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .replays import ReplayError, read_challenge, read_replay
+from ..common.replays import ReplayError, read_challenge, read_replay
 
 BASE = "https://tmnf.exchange"
 TRACKS_API = f"{BASE}/api/tracks"

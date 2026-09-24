@@ -4,7 +4,7 @@ Grounded in `main` as of the "keep only the measured path" commit. Organised by
 pipeline stage: `harvest → filter → collect → verify`, with `stats`, `clean`
 and `video` for looking at what came out.
 
-## 1. Acquisition — `harvest` (`tmx.py`)
+## 1. Acquisition — `harvest` (`harvest/tmx.py`)
 
 - **Map-first, not replay-first.** Pick maps, then take a replay *from that
   map's leaderboard*, so map and replay always match by construction — no UID
@@ -25,7 +25,7 @@ and `video` for looking at what came out.
   console commands take paths as bare words. A user agent and a courtesy delay
   on every request.
 
-## 2. Filtering — `filter` (`inputs.py`)
+## 2. Filtering — `filter` (`harvest/filter.py`)
 
 - **Input device read offline from the ghost** with pygbx, ~10 ms a file: a
   `Steer` control entry means pad, `SteerLeft`/`SteerRight` means keyboard.
@@ -38,7 +38,7 @@ and `video` for looking at what came out.
 - **Rejects moved to a sibling folder** `<folder>.rejected/<kind>/` — a
   subfolder would still be found by `collect`'s recursive discovery.
 
-## 3. Staging (`staging.py`, `mediatracker.py`, `replays.py`)
+## 3. Staging (`collect/staging.py`, `common/mediatracker.py`, `common/replays.py`)
 
 - **UID → file index** over the Tracks folder and stock campaigns, cached on
   disk, rebuilt on a miss.
@@ -57,7 +57,7 @@ and `video` for looking at what came out.
 - **Inputs extracted with `dump_inputs`**, which reads the ghost from the
   file — no validation run, so no modal dialog blocking the next map load.
 
-## 4. Instance isolation (`launcher.py`, `userdirs.py`)
+## 4. Instance isolation (`collect/launcher.py`, `collect/userdirs.py`)
 
 - **One TMLoader profile per instance**, regenerated from `default.yaml` on
   every start (so a version pin there reaches every instance), adding only
@@ -71,7 +71,7 @@ and `video` for looking at what came out.
   *back* to the controller. It scans the joined command line because
   TMLoader wraps every argument into one quoted string.
 
-## 5. Session control (`session.py`)
+## 5. Session control (`collect/session.py`)
 
 - **Wait for the menu before any command** — commands sent while the game
   initialises are dropped or crash it. The plugin reports its current state
@@ -88,7 +88,7 @@ and `video` for looking at what came out.
 - **Camera issued per run** (`cam 1`) once the race is live, because whether
   it survives a map change is not worth assuming.
 
-## 6. Arming and recording a run (`session.py`)
+## 6. Arming and recording a run (`collect/session.py`)
 
 - **Focus before arming.** An instance that has never been the foreground
   window has no input bindings and the car sits at the line; bindings then
@@ -133,7 +133,7 @@ and `video` for looking at what came out.
   (the one callback that runs in the menus); `Connect()`'s return value is
   ignored because it reports false on success.
 
-## 8. Controller and writer (`controller.py`, `protocol.py`, `dataset.py`)
+## 8. Controller and writer (`collect/controller.py`, `collect/protocol.py`, `collect/dataset.py`)
 
 - Little-endian framed protocol with a version check on the hello.
 - **The socket reader never blocks.** Frames and ticks go to *unbounded*
@@ -146,7 +146,7 @@ and `video` for looking at what came out.
   `meta.json` what was expected against what was recorded.
 - `reset()` discards a partial attempt across both queues, in order.
 
-## 9. Scheduling (`collect.py`)
+## 9. Scheduling (`collect/runner.py`)
 
 - **Shared work queue** — instances claim the next map as they free up, so
   no instance becomes the tail everyone waits on.
@@ -161,7 +161,7 @@ and `video` for looking at what came out.
 - Launches staggered; resume skips runs whose `meta.json` says ok;
   `index.json` records the effective settings so a dataset describes itself.
 
-## 10. Verification and hygiene (`verify.py`, `stats.py`, `video.py`)
+## 10. Verification and hygiene (`tools/verify.py`, `tools/stats.py`, `tools/video.py`)
 
 - `verify` re-reads what is on disk: status, finish time against the replay,
   dropped points, first sample at 0, contiguous indices, 50 ms gaps only,

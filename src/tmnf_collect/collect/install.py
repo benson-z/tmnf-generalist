@@ -5,14 +5,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .paths import Layout, detect
+from ..common.paths import Layout, detect
 
 PLUGIN_NAME = "TMNFCollect.as"
 
 
 def source_plugin() -> Path:
     """The plugin shipped in this repository."""
-    return Path(__file__).resolve().parents[2] / "plugin" / PLUGIN_NAME
+    return Path(__file__).resolve().parents[3] / "plugin" / PLUGIN_NAME
 
 
 def install(layout: Layout | None = None) -> Path:

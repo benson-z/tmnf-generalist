@@ -21,8 +21,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .hostos import DESKTOP_SIZE, IS_WINDOWS, game_command, wine_desktop
-from .paths import Layout, detect
+from ..common.hostos import DESKTOP_SIZE, IS_WINDOWS, game_command, wine_desktop
+from ..common.paths import Layout, detect
 
 if IS_WINDOWS:
     import ctypes

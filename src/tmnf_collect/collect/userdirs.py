@@ -26,8 +26,8 @@ from pathlib import Path
 
 import yaml
 
-from .hostos import IS_WINDOWS, windows_path
-from .paths import Layout
+from ..common.hostos import IS_WINDOWS, windows_path
+from ..common.paths import Layout
 
 # Mirrored from the master on every start: the settings a person edits.
 SYNCED_DIRS = ("Profiles", "Config")

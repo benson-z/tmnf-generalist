@@ -5,14 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tmnf_collect.collect import (
+from tmnf_collect.collect.runner import (
     Job,
     JobProgress,
     JobResult,
     _run_process_pool,
 )
-from tmnf_collect.paths import Layout
-from tmnf_collect.replays import ReplayInfo
+from tmnf_collect.common.paths import Layout
+from tmnf_collect.common.replays import ReplayInfo
 
 
 def fake_collector(lanes, command_queues, events, _worker_options) -> None:

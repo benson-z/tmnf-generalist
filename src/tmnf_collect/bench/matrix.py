@@ -1,7 +1,19 @@
-"""Benchmark full-replay correctness across instance-count/speed combinations."""
+"""Does a speed/instance setting still reproduce a replay exactly?
+
+Every instance records the same replay at each speed in turn, all instances
+starting a round together so they contend for the machine the way a real
+collection does. A setting passes when every run finishes on the replay's own
+time; against a reference run it must also match its input stream and car
+positions exactly.
+
+Failures at the edge are scheduling-sensitive: a setting that passes one round
+can miss by a single 10 ms physics step in the next, so a setting is only
+trusted after several rounds. This is how the 2x-with-eight-instances limit in
+the README was established.
+"""
+
 from __future__ import annotations
 
-import argparse
 import json
 import threading
 import time
@@ -10,16 +22,19 @@ from pathlib import Path
 
 import numpy as np
 
-from tmnf_collect import collect, install
-from tmnf_collect.paths import detect
-from tmnf_collect.session import Session
+from ..collect import install
+from ..collect import runner
+from ..collect.session import Session
+from ..common.paths import detect
 
 
 def _rows(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
-class TimedSession(Session):
+class _TimedSession(Session):
+    """A session that also notes when the first and last sample arrived."""
+
     capture_window: tuple[float, float] | None = None
 
     def record_map_run(self, *args, **kwargs):
@@ -76,30 +91,42 @@ def _compare(root: Path, reference: Path) -> dict:
     return comparison
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("replay", type=Path)
-    parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--instances", type=int, required=True)
-    parser.add_argument("--speeds", default="1,2,3,4,5,8,10")
-    parser.add_argument("--port", type=int, default=8520)
-    parser.add_argument("--instance-base", type=int, default=30)
-    parser.add_argument("--stagger", type=float, default=8.0)
-    parser.add_argument("--reference", type=Path)
-    args = parser.parse_args()
-    speeds = [float(value) for value in args.speeds.split(",")]
-    if args.instances < 1:
-        parser.error("--instances must be positive")
+def run(
+    replay: Path,
+    out: Path,
+    *,
+    instances: int,
+    speeds: list[float],
+    port: int = 8520,
+    instance_base: int = 30,
+    stagger: float = 8.0,
+    reference: Path | None = None,
+    width: int = 320,
+    height: int = 240,
+    camera: int = 1,
+    offscreen: bool = True,
+) -> list[dict]:
+    """Record ``replay`` on every instance at every speed; one summary per speed.
+
+    The full report, every run included, is written to
+    ``out/matrix-<instances>i.json``.
+    """
+    if instances < 1:
+        raise ValueError("instances must be positive")
+    for speed in speeds:
+        if not 1 <= speed <= 5:
+            raise ValueError(f"speed {speed:g} is outside the supported 1-5")
 
     layout = detect()
     install.install(layout)
-    prepared = collect.plan([args.replay], layout=layout, strip_intros=True)
+    prepared = runner.plan([replay], layout=layout, strip_intros=True)
     if prepared.skipped or len(prepared.jobs) != 1:
         raise RuntimeError(prepared.skipped or "replay did not produce one job")
     original = prepared.jobs[0]
-    args.out.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    report_path = out / f"matrix-{instances}i.json"
 
-    round_barrier = threading.Barrier(args.instances)
+    round_barrier = threading.Barrier(instances)
     records: list[dict] = []
     errors: list[str] = []
     lock = threading.Lock()
@@ -107,35 +134,32 @@ def main() -> None:
     def worker(index: int) -> None:
         job = replace(
             original,
-            script_name=f"matrix_{args.instances}_{index}.txt",
+            script_name=f"matrix_{instances}_{index}.txt",
             output_name=f"instance-{index}",
         )
-        session = TimedSession(
-            port=args.port + index,
-            instance_id=args.instance_base + index,
+        session = _TimedSession(
+            port=port + index,
+            instance_id=instance_base + index,
             layout=layout,
-            width=160,
-            height=120,
-            speed=1,
+            width=width,
+            height=height,
+            camera=camera,
+            offscreen=offscreen,
         )
         try:
             session.start()
             session.prepare()
             for speed in speeds:
-                session._command(f"set speed {speed}")
-                session._ctrl.configure(frame_barrier=speed > 1)
+                session.set_speed(speed)
                 round_barrier.wait(timeout=180)
                 started = time.monotonic()
-                result = collect.run_job(
-                    session,
-                    job,
-                    args.out / f"{args.instances}i-{speed:g}x",
-                    timeout=300,
+                result = runner.run_job(
+                    session, job, out / f"{instances}i-{speed:g}x", timeout=300
                 )
                 ended = time.monotonic()
                 row = {
                     **asdict(result),
-                    "instances": args.instances,
+                    "instances": instances,
                     "speed": speed,
                     "worker": index,
                     "started": started,
@@ -146,7 +170,6 @@ def main() -> None:
                     records.append(row)
                     print(json.dumps(row), flush=True)
                 round_barrier.wait(timeout=180)
-            session._command("set speed 1")
         except Exception as exc:
             with lock:
                 errors.append(f"instance {index}: {type(exc).__name__}: {exc}")
@@ -155,25 +178,24 @@ def main() -> None:
             session.close()
 
     threads = []
-    for index in range(args.instances):
-        thread = threading.Thread(target=worker, args=(index,), daemon=False)
+    for index in range(instances):
+        thread = threading.Thread(target=worker, args=(index,))
         thread.start()
         threads.append(thread)
-        if index + 1 < args.instances:
-            time.sleep(args.stagger)
+        if index + 1 < instances:
+            time.sleep(stagger)
     for thread in threads:
         thread.join()
 
     if errors:
-        report = {"runs": records, "errors": errors}
-        (args.out / f"matrix-{args.instances}i.json").write_text(
-            json.dumps(report, indent=2), encoding="utf-8"
+        report_path.write_text(
+            json.dumps({"runs": records, "errors": errors}, indent=2),
+            encoding="utf-8",
         )
         raise RuntimeError("; ".join(errors))
 
-    reference = args.reference
-    if reference is None and args.instances == 1 and 1.0 in speeds:
-        reference = args.out / "1i-1x" / "instance-0"
+    if reference is None and instances == 1 and 1.0 in speeds:
+        reference = out / "1i-1x" / "instance-0"
     summaries = []
     for speed in speeds:
         group = [row for row in records if row["speed"] == speed]
@@ -181,7 +203,7 @@ def main() -> None:
             row["capture_window"] for row in group if row["capture_window"]
         ]
         summary = {
-            "instances": args.instances,
+            "instances": instances,
             "speed": speed,
             "passed": sum(row["status"] == "ok" for row in group),
             "runs": len(group),
@@ -194,25 +216,19 @@ def main() -> None:
                 w[0] for w in capture_windows
             )
             summary["aggregate_capture_speed"] = (
-                args.instances * original.replay.race_time / 1000 / capture_seconds
+                instances * original.replay.race_time / 1000 / capture_seconds
             )
         if reference is not None:
-            comparisons = []
-            for row in group:
-                run_root = (
-                    args.out
-                    / f"{args.instances}i-{speed:g}x"
-                    / row["output_name"]
+            summary["comparisons"] = [
+                _compare(
+                    out / f"{instances}i-{speed:g}x" / row["output_name"],
+                    reference,
                 )
-                comparisons.append(_compare(run_root, reference))
-            summary["comparisons"] = comparisons
+                for row in group
+            ]
         summaries.append(summary)
-    report = {"runs": records, "summaries": summaries}
-    (args.out / f"matrix-{args.instances}i.json").write_text(
-        json.dumps(report, indent=2), encoding="utf-8"
+    report_path.write_text(
+        json.dumps({"runs": records, "summaries": summaries}, indent=2),
+        encoding="utf-8",
     )
-    print(json.dumps(summaries, indent=2), flush=True)
-
-
-if __name__ == "__main__":
-    main()
+    return summaries

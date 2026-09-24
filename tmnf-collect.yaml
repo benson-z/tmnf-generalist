@@ -56,7 +56,7 @@ collect:
   # Lossless. QOI packed with zstd-6: 70.0KB a frame at 3669 frames a second
   # across eight encoder threads, against 66.9KB at 1054/s for lossless WebP
   # and 75.9KB at 835/s for PNG. Both halves release the GIL, which is what
-  # keeps eight socket readers draining. See tmnf_collect.frames.
+  # keeps eight socket readers draining. See tmnf_collect.common.frames.
   # Costs about 5.8 GB per recorded hour against 0.85 GB for JPEG q80.
   frame_codec: qoi-zstd
 
