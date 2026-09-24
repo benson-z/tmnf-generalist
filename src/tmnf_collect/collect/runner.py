@@ -768,7 +768,6 @@ def _run_process_pool(
     deadline: float | None,
     progress: Callable[[JobResult], None] | None,
     live_progress: Callable[[JobProgress], None] | None,
-    subprocess_target=_collector_subprocess,
 ) -> tuple[list[JobResult], list[str], int]:
     """Coordinate subprocess game lanes from one authoritative scheduler."""
     context = multiprocessing.get_context("spawn")
@@ -805,7 +804,7 @@ def _run_process_pool(
     try:
         for lane in lanes:
             process = context.Process(
-                target=subprocess_target,
+                target=_collector_subprocess,
                 args=(
                     [lane],
                     [commands[lane.instance_id]],
