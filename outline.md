@@ -100,8 +100,17 @@ does not. For each `.Replay.Gbx`:
 - **`--fetch-maps`** looks a missing UID up on TMX and rejects the download
   unless its own UID matches. Opt-in because it reaches a third-party site and
   writes into the game's Tracks folder.
-- **Everything staged before any game launches** — the game indexes its
-  Tracks folder at startup only.
+- **Maps staged before the game that plays them launches** — the game indexes
+  its Tracks folder at startup only (a map fetched after launch fails `map`
+  with the game still in the menu; a late replay's `dump_inputs` works).
+  Normally that means everything first. With `--fetch-maps` under the process
+  coordinator, fetching runs ~0.5 replays/s (2518 replays ≈ 90 min), so
+  staging runs in a background thread instead: games launch once each lane
+  has a map, a lane is only given maps staged before its game launched, and a
+  lane that runs out restarts its game once 8 newer maps wait (or staging has
+  finished), spaced like the initial launches. 30 replays with no map on disk:
+  games up with 11 staged, 29/30 ok, the other a desync. Resume is checked
+  before fetching, so a re-run does not download finished maps again.
 - **MediaTracker clips stripped from the staged copy** (`--keep-intros` to
   opt out). Intros averaged 20 s a map against 41 s of driving, and some never
   end without a keypress. Nothing skips them from outside: TMInterface's
@@ -190,6 +199,15 @@ does not. For each `.Replay.Gbx`:
   desync rather than recorded to the timeout.
 - `restarted`, `not_driven`, `error`, `time_mismatch` and `dropped_frames` are
   retried on the same instance; `unfinished` is not (see §0).
+- **`game_crashed`**: some TMX maps kill TMNF under Wine as they load,
+  stripped or not (tmx-4347297 and tmx-5760368 did, every time). Such a map
+  is not retried and not handed to another lane, where it killed a healthy
+  game too; the lane restarts its own game and carries on. Three crashes in
+  a row and the lane gives up. Before this, two such replays took four of
+  eight lanes out of a collection.
+- **Encoder failures are the run's, not the game's.** A broken pipe to ffmpeg
+  is an `OSError`, which used to mark the game lost; it is `FrameWriteError`
+  now, and ffmpeg is restarted if it dies before its first frame.
 
 ## 7. Sampling in the plugin (`plugin/TMNFCollect.as`)
 

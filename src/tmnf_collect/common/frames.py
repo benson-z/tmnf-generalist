@@ -75,6 +75,7 @@ import io
 import shutil
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -151,6 +152,19 @@ def decode(payload: bytes, *, codec: str = LOSSLESS) -> Image.Image:
     return Image.open(io.BytesIO(payload))
 
 
+def _ffmpeg_errors(log) -> str:
+    """What ffmpeg wrote, less Mesa's harmless amdgpu fd-comparison warning."""
+    log.seek(0)
+    lines = log.read().decode(errors="replace").splitlines()
+    noise = ("os_same_file_description", "If they do, bad things may happen")
+    kept = [line for line in lines if not any(n in line for n in noise)]
+    return "\n".join(kept).strip()[-500:]
+
+
+class FrameWriteError(RuntimeError):
+    """The frame encoder failed. The run is lost, the game is not."""
+
+
 class VideoEncoder:
     """Streams one run's frames through ffmpeg into a single H.265 file.
 
@@ -166,12 +180,55 @@ class VideoEncoder:
         self.codec = codec
         self._process: subprocess.Popen | None = None
         self._log = None
+        self._frames = 0
+        self._failed: str | None = None
 
     def add(self, pixels: bytes, width: int, height: int) -> None:
-        if self._process is None:
-            self._start(width, height)
-        assert self._process is not None and self._process.stdin is not None
-        self._process.stdin.write(pixels)
+        # ffmpeg occasionally exits before taking a single frame (seen as a
+        # broken pipe on the first write, with the GPU encoder while games were
+        # restarting). Nothing is lost at that point, so start it again; once
+        # frames have gone in, the stream cannot be resumed and the run fails.
+        if self._failed is not None:
+            raise FrameWriteError(self._failed)
+        for attempt in range(3):
+            if self._process is None:
+                self._start(width, height)
+            assert self._process is not None and self._process.stdin is not None
+            try:
+                self._process.stdin.write(pixels)
+                self._frames += 1
+                return
+            except BrokenPipeError:
+                written = self._frames
+                message = self._abandon()
+                if written or attempt == 2:
+                    self._failed = (
+                        f"ffmpeg stopped after {written} frame(s): {message}"
+                    )
+                    raise FrameWriteError(self._failed) from None
+                time.sleep(0.5 * (attempt + 1))
+
+    def _abandon(self) -> str:
+        """Reap a dead ffmpeg; its error output, and no partial file."""
+        process, log = self._process, self._log
+        self._process = self._log = None
+        message = ""
+        if process is not None:
+            try:
+                assert process.stdin is not None
+                process.stdin.close()
+            except OSError:
+                pass
+            code = process.wait()
+            message = f"exit {code}"
+        if log is not None:
+            text = _ffmpeg_errors(log)
+            log.close()
+            if text:
+                message += f": {text}"
+        self.path.unlink(missing_ok=True)
+        self._frames = 0
+        return message
 
     def _start(self, width: int, height: int) -> None:
         # Errors only, but kept off the terminal: the collector's live display
@@ -222,6 +279,7 @@ class VideoEncoder:
     def _finish(self) -> None:
         process, log = self._process, self._log
         self._process = self._log = None
+        self._frames = 0
         if process is None:
             return
         try:
@@ -233,15 +291,15 @@ class VideoEncoder:
             code = process.wait()
             if code != 0:
                 assert log is not None
-                log.seek(0)
-                message = log.read().decode(errors="replace").strip()
-                raise RuntimeError(f"ffmpeg exited with {code}: {message}")
+                message = _ffmpeg_errors(log)
+                raise FrameWriteError(f"ffmpeg exited with {code}: {message}")
         finally:
             if log is not None:
                 log.close()
 
     def discard(self) -> None:
         """Throw away everything encoded so far; the next frame starts over."""
+        self._failed = None
         try:
             self._finish()
         finally:

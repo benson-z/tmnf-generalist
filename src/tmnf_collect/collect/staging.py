@@ -60,7 +60,10 @@ def stage_challenge(
                 removed = mediatracker.strip_file(source, target)
                 marker.write_text(str(removed), encoding="utf-8")
             except mediatracker.MediaTrackerError:
-                shutil.copyfile(source, target)  # keep the map, keep the intro
+                # Keep the map, keep the intro. A map fetched from TMX already
+                # is the target, and copying a file onto itself raises.
+                if source.resolve() != target.resolve():
+                    shutil.copyfile(source, target)
         return f"{STAGE_DIR}/{source.name}"
 
     if not target.exists() or target.stat().st_size != source.stat().st_size:

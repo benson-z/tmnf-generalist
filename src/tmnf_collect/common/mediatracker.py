@@ -106,7 +106,18 @@ def strip_clips(data: bytes) -> tuple[bytes, int]:
 
 def strip_file(source: Path, target: Path) -> int:
     """Write ``source`` to ``target`` without its clips. Returns bytes removed."""
-    rebuilt, removed = strip_clips(source.read_bytes())
+    try:
+        rebuilt, removed = strip_clips(source.read_bytes())
+    except MediaTrackerError:
+        raise
+    except Exception as exc:
+        # Truncated or otherwise malformed: the caller falls back to the map
+        # as it is, which is only possible if this is the error it gets.
+        raise MediaTrackerError(f"{source.name}: {exc}") from exc
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(rebuilt)
+    # Written aside and swapped in: a map fetched by --fetch-maps is stripped
+    # in place, and a half-written one would be the only copy.
+    temporary = target.with_name(target.name + ".part")
+    temporary.write_bytes(rebuilt)
+    temporary.replace(target)
     return removed

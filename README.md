@@ -100,7 +100,9 @@ out/corpus/
 ```
 
 A run's status is `ok`, or says why not: `time_mismatch` (finished at a
-different millisecond from the replay), `unfinished`, `no_inputs`, and so on.
+different millisecond from the replay), `unfinished`, `no_inputs`,
+`game_crashed` (the map crashes the game, so it is set aside rather than
+retried), and so on.
 Add `--log` to `collect` to also save the in-game TMInterface console to
 `gamelog.txt`, which is the fastest way to see why a run misbehaved.
 

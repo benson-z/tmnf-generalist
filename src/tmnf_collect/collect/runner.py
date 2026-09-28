@@ -15,13 +15,17 @@ import queue
 import threading
 import time
 import traceback
-from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from ..common import replays
-from ..common.frames import LOSSLESS, VIDEO_CODECS, keyframe_interval
+from ..common.frames import (
+    LOSSLESS,
+    VIDEO_CODECS,
+    FrameWriteError,
+    keyframe_interval,
+)
 from ..common.paths import Layout, detect
 from ..common.replays import ChallengeIndex, ReplayError, ReplayInfo
 from . import install, staging
@@ -50,6 +54,9 @@ class Job:
     script_name: str
     output_name: str
     requeued: int = 0  # times another instance died holding this job
+    # time.monotonic() when its files were staged. A game only sees maps staged
+    # before it launched; 0 means staged before any game started.
+    staged_at: float = 0.0
 
 
 @dataclass
@@ -110,6 +117,17 @@ def _safe_name(path: Path) -> str:
     return "".join(c if c.isalnum() or c in "-_." else "_" for c in stem)
 
 
+@dataclass
+class StagingProgress:
+    """How far `plan` has got through the replays."""
+
+    total: int
+    done: int = 0
+    fetched: int = 0  # maps downloaded from TMX
+    skipped: int = 0
+    already_done: int = 0  # recorded ok by an earlier collect; not staged
+
+
 def plan(
     replay_paths: list[Path],
     *,
@@ -117,70 +135,108 @@ def plan(
     index: ChallengeIndex | None = None,
     fetch_map: MapFetcher | None = None,
     strip_intros: bool = False,
+    on_step: Callable[[StagingProgress], None] | None = None,
+    on_job: Callable[[Job], None] | None = None,
+    is_done: Callable[[str], bool] | None = None,
+    stop: threading.Event | None = None,
 ) -> Plan:
     """Resolve maps and stage every file.
 
     Staging happens here, before any instance starts, because the game builds
-    its Tracks index at startup and will not see files added later.
+    its Tracks index at startup and will not see files added later. With maps
+    fetched from TMX that is about two replays a second, so a corpus of
+    thousands spends the better part of an hour here; ``on_step`` hears about
+    every replay. ``on_job`` gets each job as soon as it is staged, which is
+    what lets the process coordinator start recording before staging ends.
+    ``is_done`` names the runs to leave out without fetching their maps again.
     """
     layout = layout or detect()
     index = index or ChallengeIndex(layout)
     result = Plan()
+    step = StagingProgress(total=len(replay_paths))
 
     for path in replay_paths:
-        try:
-            info = replays.read_replay(path)
-        except ReplayError as exc:
-            result.skipped.append({"replay": str(path), "reason": str(exc)})
-            continue
+        if stop is not None and stop.is_set():
+            break
+        if is_done is not None and is_done(_safe_name(path)):
+            step.already_done += 1
+        else:
+            before = len(result.jobs)
+            _plan_one(path, result, step, layout, index, fetch_map, strip_intros)
+            if len(result.jobs) > before:
+                result.jobs[-1].staged_at = time.monotonic()
+                if on_job is not None:
+                    on_job(result.jobs[-1])
+        step.done += 1
+        step.skipped = len(result.skipped)
+        if on_step is not None:
+            on_step(step)
 
-        if not info.has_inputs:
+    return result
+
+
+def _plan_one(
+    path: Path,
+    result: Plan,
+    step: StagingProgress,
+    layout: Layout,
+    index: ChallengeIndex,
+    fetch_map: MapFetcher | None,
+    strip_intros: bool,
+) -> None:
+    try:
+        info = replays.read_replay(path)
+    except ReplayError as exc:
+        result.skipped.append({"replay": str(path), "reason": str(exc)})
+        return
+
+    if not info.has_inputs:
+        result.skipped.append(
+            {
+                "replay": str(path),
+                "reason": "replay did not finish, so it carries no inputs",
+            }
+        )
+        return
+
+    challenge = index.find(info.map_uid)
+    if challenge is None and fetch_map is not None:
+        # A replay names its map only by UID, and one downloaded from TMX
+        # rarely arrives with the map beside it.
+        try:
+            challenge = fetch_map(info.map_uid, staging.challenges_dir(layout))
+        except MapFetchError as exc:
             result.skipped.append(
                 {
                     "replay": str(path),
-                    "reason": "replay did not finish, so it carries no inputs",
+                    "reason": f"could not fetch map {info.map_uid}: {exc}",
                 }
             )
-            continue
+            return
+        if challenge is not None:
+            step.fetched += 1
+    if challenge is None:
+        reason = f"no local map with UID {info.map_uid}"
+        if fetch_map is None:
+            reason += " (try --fetch-maps)"
+        else:
+            reason += " and the map source does not have it either"
+        result.skipped.append({"replay": str(path), "reason": reason})
+        return
 
-        challenge = index.find(info.map_uid)
-        if challenge is None and fetch_map is not None:
-            # A replay names its map only by UID, and one downloaded from TMX
-            # rarely arrives with the map beside it.
-            try:
-                challenge = fetch_map(info.map_uid, staging.challenges_dir(layout))
-            except MapFetchError as exc:
-                result.skipped.append(
-                    {
-                        "replay": str(path),
-                        "reason": f"could not fetch map {info.map_uid}: {exc}",
-                    }
-                )
-                continue
-        if challenge is None:
-            reason = f"no local map with UID {info.map_uid}"
-            if fetch_map is None:
-                reason += " (try --fetch-maps)"
-            else:
-                reason += " and the map source does not have it either"
-            result.skipped.append({"replay": str(path), "reason": reason})
-            continue
-
-        name = _safe_name(path)
-        result.jobs.append(
-            Job(
-                replay=info,
-                challenge_path=challenge,
-                staged_replay=staging.stage_replay(path, layout),
-                staged_challenge=staging.stage_challenge(
-                    challenge, layout, strip_intro=strip_intros
-                ),
-                script_name=f"tmnf_collect_{name}.txt",
-                output_name=name,
-            )
+    name = _safe_name(path)
+    result.jobs.append(
+        Job(
+            replay=info,
+            challenge_path=challenge,
+            staged_replay=staging.stage_replay(path, layout),
+            staged_challenge=staging.stage_challenge(
+                challenge, layout, strip_intro=strip_intros
+            ),
+            script_name=f"tmnf_collect_{name}.txt",
+            output_name=name,
         )
-
-    return result
+    )
 
 
 def run_job(
@@ -312,6 +368,13 @@ def run_job(
                     "reset_camera": True,  # the plugin always does now
                 }
             )
+    except FrameWriteError as exc:
+        # The encoder, not the game: the run is retried like any other error
+        # and the lane carries on. Checked before OSError, which a broken pipe
+        # to ffmpeg would otherwise be taken for, marking a healthy game lost.
+        result.status = "error"
+        result.detail = f"frame encoder failed: {exc}"
+        _mark_failed(out_root / job.output_name, result.detail)
     except (SessionError, OSError, ConnectionError) as exc:
         result.status = "error"
         result.detail = str(exc)
@@ -330,9 +393,26 @@ def run_job(
     return result
 
 
-def already_done(out_root: Path, job: Job) -> bool:
+def _mark_failed(run_dir: Path, detail: str) -> None:
+    """Correct a meta.json written as ok before the frames failed to close.
+
+    Resume trusts that status, so an ok left in place would skip this replay
+    for good with its frames missing.
+    """
+    meta_path = run_dir / "meta.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    meta["status"] = "error"
+    meta["detail"] = detail
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
+def already_done(out_root: Path, job: Job | str) -> bool:
     """Has this replay already been recorded successfully?"""
-    meta_path = out_root / job.output_name / "meta.json"
+    name = job if isinstance(job, str) else job.output_name
+    meta_path = out_root / name / "meta.json"
     try:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -429,7 +509,7 @@ def _execute_job(
         codec=codec,
         on_progress=sample_progress if live_progress is not None else None,
     )
-    if result.status in RETRY_STATUSES and retries:
+    if result.status in RETRY_STATUSES and retries and not _game_gone(session):
         attempts += 1
         announce_preparing()
         result = run_job(
@@ -442,6 +522,19 @@ def _execute_job(
     result.attempts = attempts
     result.instance = instance_id
     return result
+
+
+def _game_gone(session: Session) -> bool:
+    return (
+        session.lost
+        or session.instance is None
+        or not session.instance.is_alive()
+    )
+
+
+# A game that dies on a map is restarted and the lane carries on; this many in
+# a row says the trouble is not the maps, and the lane gives up.
+MAX_CONSECUTIVE_CRASHES = 3
 
 
 def _worker(
@@ -654,14 +747,17 @@ def _process_lane(
     current_job: Job | None = None
     result: JobResult | None = None
     drawing = True
+    crashes = 0
 
     def emit(kind: str, payload=None) -> None:
         events.put((kind, lane.instance_id, payload))
 
-    try:
-        if lane.startup_delay:
-            time.sleep(lane.startup_delay)
-        session = Session(
+    def launch() -> Session:
+        # The game indexes Tracks as it starts, so the coordinator needs to
+        # know when that was to tell which staged maps this game can load.
+        # time.monotonic() is one clock across processes.
+        emit("launching", time.monotonic())
+        started = Session(
             port=lane.port,
             instance_id=lane.instance_id,
             layout=layout,
@@ -673,14 +769,29 @@ def _process_lane(
             speed=speed,
             offscreen=offscreen,
         )
-        session.start()
-        session.prepare(hide_console=hide_console)
+        started.start()
+        started.prepare(hide_console=hide_console)
+        return started
+
+    try:
+        if lane.startup_delay:
+            time.sleep(lane.startup_delay)
+        session = launch()
         emit("ready")
 
         while True:
             kind, payload = commands.get()
             if kind == "stop":
                 break
+            if kind == "restart":
+                # Maps staged since this game started are invisible to it
+                # until it starts again.
+                session.close()
+                session = None
+                session = launch()
+                drawing = True
+                emit("ready")
+                continue
             if kind == "idle":
                 if drawing:
                     session._command("set draw_game false", settle=0.0)
@@ -702,13 +813,31 @@ def _process_lane(
                 retries=retries,
                 live_progress=lambda update: emit("progress", update),
             )
-            if result.status == "error" and (
-                session.lost
-                or session.instance is None
-                or not session.instance.is_alive()
-            ):
-                emit("fatal", (current_job, result, result.detail))
-                return
+            if result.status == "error" and _game_gone(session):
+                # Some maps crash the game outright, stripped or not, and
+                # would crash any other game handed them too. So the map is
+                # not passed on: it is recorded as the reason, and this lane
+                # restarts its game rather than dropping out for the rest of
+                # the collection.
+                crashes += 1
+                result.status = "game_crashed"
+                result.detail = f"the game died on this map: {result.detail}"
+                if crashes >= MAX_CONSECUTIVE_CRASHES:
+                    emit("fatal", (current_job, result, result.detail))
+                    return
+                emit("result", (current_job, result))
+                current_job = None
+                result = None
+                try:
+                    session.close()
+                except Exception:
+                    pass
+                session = None
+                session = launch()
+                drawing = True
+                emit("ready")
+                continue
+            crashes = 0
             emit("result", (current_job, result))
             current_job = None
             result = None
@@ -778,8 +907,48 @@ def _run_process_pool(
     deadline: float | None,
     progress: Callable[[JobResult], None] | None,
     live_progress: Callable[[JobProgress], None] | None,
+    incoming: queue.Queue | None = None,
+    staging_done: threading.Event | None = None,
 ) -> tuple[list[JobResult], list[str], int]:
-    """Coordinate subprocess game lanes from one authoritative scheduler."""
+    """Coordinate subprocess game lanes from one authoritative scheduler.
+
+    With ``incoming``, staging is still going on: jobs arrive on that queue
+    while games record, and ``jobs`` grows as they do. A game only sees maps
+    staged before it launched, so a lane is only given those, and one that has
+    run out while newer maps wait is restarted to pick them up. Restarts wait
+    for a batch of new maps and are spaced like the initial launches, so the
+    games are not relaunched for every map, nor all at once.
+    """
+    pending: list[Job] = list(jobs)
+
+    def pull() -> None:
+        if incoming is None:
+            return
+        while True:
+            try:
+                job = incoming.get_nowait()
+            except queue.Empty:
+                return
+            jobs.append(job)
+            pending.append(job)
+
+    def staging_open() -> bool:
+        return staging_done is not None and not staging_done.is_set()
+
+    lane_count = max(1, process_count)
+    if incoming is None:
+        lane_count = min(len(jobs), lane_count)
+    else:
+        # Launch once every lane has a map to start on, not before: a game
+        # started now would see nothing and need a restart straight away.
+        while len(jobs) < lane_count and staging_open():
+            pull()
+            time.sleep(0.2)
+        pull()
+        lane_count = min(len(jobs), lane_count)
+        if not lane_count:
+            return [], [], 0
+
     context = multiprocessing.get_context("spawn")
     events = context.Queue()
     lanes = [
@@ -788,7 +957,7 @@ def _run_process_pool(
             port=port + index,
             startup_delay=stagger * index,
         )
-        for index in range(min(len(jobs), max(1, process_count)))
+        for index in range(lane_count)
     ]
     # process_count is both the number of collector subprocesses and, in this
     # mode, the number of game lanes. Keeping them 1:1 isolates socket readers,
@@ -835,7 +1004,10 @@ def _run_process_pool(
         events.close()
         raise
 
-    pending = deque(sorted(jobs, key=lambda job: -job.replay.race_time))
+    # When each lane's game last launched; see Job.staged_at.
+    launched_at: dict[int, float] = {}
+    last_launch = time.monotonic() + stagger * (len(lanes) - 1)
+    restart_batch = max(8, len(lanes))
     active: dict[int, Job] = {}
     ready: set[int] = set()
     seen: set[int] = set()
@@ -866,6 +1038,10 @@ def _run_process_pool(
         if live_progress is not None:
             live_progress(JobProgress(instance=instance_id, state="idle"))
 
+    def loadable(instance_id: int) -> list[Job]:
+        launched = launched_at.get(instance_id, 0.0)
+        return [job for job in pending if job.staged_at < launched]
+
     def assign_ready() -> None:
         if deadline is not None and time.monotonic() >= deadline:
             return
@@ -876,18 +1052,44 @@ def _run_process_pool(
             # staggered game has even reached its menu.
             if len(pending) <= len(unseen):
                 break
-            job = pending.popleft()
+            choices = loadable(instance_id)
+            if not choices:
+                continue
+            # Longest first is the standard greedy bound on the slow tail.
+            job = max(choices, key=lambda item: item.replay.race_time)
+            pending.remove(job)
             ready.remove(instance_id)
             idle_sent.discard(instance_id)
             active[instance_id] = job
             commands[instance_id].put(("job", job))
 
+    def restart_starved() -> None:
+        nonlocal last_launch
+        for instance_id in sorted(tuple(ready)):
+            if not pending or loadable(instance_id):
+                continue
+            # Everything pending was staged after this game launched.
+            if staging_open() and len(pending) < restart_batch:
+                continue
+            if time.monotonic() - last_launch < stagger:
+                return
+            ready.discard(instance_id)
+            idle_sent.discard(instance_id)
+            last_launch = time.monotonic()
+            commands[instance_id].put(("restart", None))
+
     try:
         while True:
+            pull()
             assign_ready()
             live_lanes = lane_ids - dead
             budget_done = deadline is not None and time.monotonic() >= deadline
-            if not active and (not pending or budget_done or not live_lanes):
+            if not budget_done:
+                restart_starved()
+            more_coming = staging_open() and not budget_done
+            if not active and (
+                (not pending and not more_coming) or budget_done or not live_lanes
+            ):
                 # Wait until every still-live staggered launcher has checked in,
                 # then shut all games down together so closing one window cannot
                 # steal focus from a run that is still recording.
@@ -895,7 +1097,9 @@ def _run_process_pool(
                     break
 
             for instance_id in ready:
-                if instance_id not in idle_sent and (not pending or budget_done):
+                if instance_id not in idle_sent and (
+                    not loadable(instance_id) or budget_done
+                ):
                     commands[instance_id].put(("idle", None))
                     idle_sent.add(instance_id)
 
@@ -921,7 +1125,7 @@ def _run_process_pool(
                         if job is not None:
                             if job.requeued < 1 and lane_ids - dead:
                                 job.requeued += 1
-                                pending.appendleft(job)
+                                pending.append(job)
                             else:
                                 finish_result(
                                     job,
@@ -943,6 +1147,9 @@ def _run_process_pool(
             if kind == "progress":
                 if live_progress is not None:
                     live_progress(payload)
+            elif kind == "launching":
+                launched_at[instance_id] = payload
+                last_launch = max(last_launch, payload)
             elif kind == "ready":
                 seen.add(instance_id)
                 ready.add(instance_id)
@@ -958,9 +1165,15 @@ def _run_process_pool(
                 clear_lane(instance_id)
                 job = active.pop(instance_id, None) or reported_job
                 failures.append(f"instance {instance_id}: {detail[:500]}")
-                if job is not None and job.requeued < 1 and lane_ids - dead:
+                crashed_game = result is not None and result.status == "game_crashed"
+                if (
+                    job is not None
+                    and not crashed_game  # it would crash the next game too
+                    and job.requeued < 1
+                    and lane_ids - dead
+                ):
                     job.requeued += 1
-                    pending.appendleft(job)
+                    pending.append(job)
                 elif job is not None:
                     if result is None:
                         result = JobResult(
@@ -1031,13 +1244,19 @@ def collect(
     stagger: float = 8.0,
     progress: Callable[[JobResult], None] | None = None,
     live_progress: Callable[[JobProgress], None] | None = None,
+    staging_progress: Callable[[StagingProgress], None] | None = None,
 ) -> dict:
     """Record every replay under ``replay_root``.
 
     Game instances run in parallel, each on its own port. With ``processes``
     greater than zero, a parent coordinator assigns jobs to that many isolated
     collector subprocesses; otherwise ``instances`` worker threads are used.
-    Every file is staged first because the game indexes Tracks at startup.
+
+    The game indexes Tracks at startup, so maps are staged before the games
+    that play them launch. Normally that means everything first. Fetching maps
+    from TMX is slow enough (about two replays a second) that with
+    ``fetch_map`` and ``processes`` staging runs in the background instead,
+    and games start, and restart, on what has been staged so far.
     """
     if not 1 <= speed <= 5:
         raise ValueError("speed must be between 1 and 5")
@@ -1061,18 +1280,62 @@ def collect(
     paths = replays.discover_replays(replay_root)
     if limit is not None:
         paths = paths[:limit]
-    prepared = plan(
-        paths, layout=layout, fetch_map=fetch_map, strip_intros=strip_intros
-    )
 
-    jobs = prepared.jobs
-    resumed = 0
-    if resume:
-        keep = [job for job in jobs if not already_done(out_root, job)]
-        resumed = len(jobs) - len(keep)
-        jobs = keep
+    step = StagingProgress(total=len(paths))
 
-    instances = max(1, min(requested_lanes, len(jobs))) if jobs else 0
+    def on_step(progress_so_far: StagingProgress) -> None:
+        nonlocal step
+        step = progress_so_far
+        if staging_progress is not None:
+            staging_progress(progress_so_far)
+
+    is_done = (lambda name: already_done(out_root, name)) if resume else None
+    stream = bool(processes and fetch_map)
+    incoming: queue.Queue | None = None
+    staging_done = threading.Event()
+    stop_staging = threading.Event()
+    staging_errors: list[str] = []
+    prepared = Plan()
+    jobs: list[Job] = []
+
+    if stream:
+        incoming = queue.Queue()
+
+        def stage_all() -> None:
+            nonlocal prepared
+            try:
+                prepared = plan(
+                    paths,
+                    layout=layout,
+                    fetch_map=fetch_map,
+                    strip_intros=strip_intros,
+                    on_step=on_step,
+                    on_job=incoming.put,
+                    is_done=is_done,
+                    stop=stop_staging,
+                )
+            except Exception as exc:
+                staging_errors.append(
+                    f"staging stopped: {type(exc).__name__}: {exc}"
+                )
+            finally:
+                staging_done.set()
+
+        stager = threading.Thread(target=stage_all, name="tmnf-staging")
+        stager.start()
+        instances = max(1, min(requested_lanes, len(paths))) if paths else 0
+    else:
+        prepared = plan(
+            paths,
+            layout=layout,
+            fetch_map=fetch_map,
+            strip_intros=strip_intros,
+            on_step=on_step,
+            is_done=is_done,
+        )
+        jobs = prepared.jobs
+        staging_done.set()
+        instances = max(1, min(requested_lanes, len(jobs))) if jobs else 0
 
     progress_lock = threading.Lock()
     progress_completed: set[str] = set()
@@ -1099,30 +1362,41 @@ def collect(
         claims_dir = out_root / ".claims"
         claims_dir.mkdir(parents=True, exist_ok=True)
 
-    if processes and jobs:
-        results, failures, not_started = _run_process_pool(
-            jobs,
-            out_root,
-            process_count=instances,
-            instance_base=instance_base,
-            port=port,
-            layout=layout,
-            width=width,
-            height=height,
-            period_ms=period_ms,
-            hide_ui=hide_ui,
-            hide_console=hide_console,
-            camera=camera,
-            speed=speed,
-            offscreen=offscreen,
-            codec=codec,
-            retries=retries,
-            capture_log=capture_log,
-            stagger=stagger,
-            deadline=deadline,
-            progress=progress,
-            live_progress=report_live,
-        )
+    if processes and (jobs or stream):
+        try:
+            results, failures, not_started = _run_process_pool(
+                jobs,
+                out_root,
+                process_count=instances,
+                instance_base=instance_base,
+                port=port,
+                layout=layout,
+                width=width,
+                height=height,
+                period_ms=period_ms,
+                hide_ui=hide_ui,
+                hide_console=hide_console,
+                camera=camera,
+                speed=speed,
+                offscreen=offscreen,
+                codec=codec,
+                retries=retries,
+                capture_log=capture_log,
+                stagger=stagger,
+                deadline=deadline,
+                progress=progress,
+                live_progress=report_live,
+                incoming=incoming,
+                staging_done=staging_done,
+            )
+        finally:
+            # Out of budget or out of lanes: nothing left will record the
+            # rest, so do not keep downloading it.
+            stop_staging.set()
+            if stream:
+                stager.join()
+        failures.extend(staging_errors)
+        jobs = prepared.jobs
     else:
         # Released only when the whole queue is drained, so no window closes
         # while another instance is still recording.
@@ -1195,7 +1469,7 @@ def collect(
         "replays_found": len(paths),
         "instances": instances,
         "worker_processes": instances if processes else 0,
-        "skipped_already_done": resumed,
+        "skipped_already_done": step.already_done,
         # Left on the queue when the time budget ran out; a later collect
         # over the same folder resumes with exactly these.
         "not_started": not_started,

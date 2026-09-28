@@ -24,4 +24,17 @@ services:
       - ./dl:/dl:ro                     # installers (not in git)
       - ..:/work                        # this repo
       - ${TMNF_OUT:-./data/out}:/out    # datasets
+      - tmnf-ml:/tmnf-ml                # NAS: train_replays/, train_data/
     working_dir: /work
+
+volumes:
+  # tmnf-ml on the NAS: train_replays/ holds replay corpora, train_data/ the
+  # collected datasets. Mounted by Docker itself so the host needs no
+  # cifs-utils. Docker keeps these options with the volume once created: after
+  # changing them, `docker compose down && docker volume rm docker_tmnf-ml`.
+  tmnf-ml:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: ${SMB_DEVICE}
+      o: addr=${SMB_HOST},username=${SMB_USER},password=${SMB_PASSWORD},vers=3.0,uid=1000,gid=1000

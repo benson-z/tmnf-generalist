@@ -42,6 +42,9 @@ class _CollectProgress:
         self._completed = 0
         self._total = 0
         self._announced = False
+        self._staging_task: int | None = None
+        self._staging_started = time.monotonic()
+        self._staging_printed = 0.0
         self._progress = Progress(
             TextColumn("{task.description:>5}"),
             BarColumn(bar_width=22),
@@ -57,6 +60,37 @@ class _CollectProgress:
             "TOTAL", total=0, detail="0/0 maps  0 queued  0 running"
         )
 
+    def staging(self, step: collect_mod.StagingProgress) -> None:
+        """Maps fetched and staged before any game starts; long for a big corpus."""
+        elapsed = time.monotonic() - self._staging_started
+        rate = step.done / elapsed if elapsed > 0 else 0.0
+        left = (step.total - step.done) / rate if rate > 0 else 0.0
+        detail = (
+            f"{step.done}/{step.total} replays  {step.fetched} maps fetched  "
+            f"{step.skipped} skipped  {rate:.1f}/s  ~{left / 60:.0f} min left"
+        )
+        finished = step.done == step.total
+        with self._lock:
+            if not self._tty:
+                # A line every ten seconds, and the last one, keeps a log
+                # readable without leaving it silent for most of an hour.
+                now = time.monotonic()
+                if finished or step.done == 1 or now - self._staging_printed >= 10:
+                    self._staging_printed = now
+                    print(f"staging {detail}", flush=True)
+                return
+            if self._staging_task is None:
+                self._staging_task = self._progress.add_task(
+                    "MAPS", total=step.total, detail=""
+                )
+            self._progress.update(
+                self._staging_task, completed=step.done, detail=detail
+            )
+            if finished:
+                self._progress.remove_task(self._staging_task)
+                self._staging_task = None
+                self._console.print(f"staged {detail.split('  ~')[0]}")
+
     def update(self, update: collect_mod.JobProgress) -> None:
         with self._lock:
             self._completed = update.completed
@@ -68,7 +102,7 @@ class _CollectProgress:
                     self._active[update.instance] = update
 
             if not self._tty:
-                if not self._announced:
+                if not self._announced and self._total:
                     print(f"queued {self._total} map(s)", flush=True)
                     self._announced = True
                 if update.instance is not None and update.state == "preparing":
@@ -243,6 +277,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
             resume=not args.no_resume,
             progress=display.result,
             live_progress=display.update,
+            staging_progress=display.staging,
         )
     finally:
         display.close()
