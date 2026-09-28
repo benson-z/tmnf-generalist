@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from ..common import frames as frames_mod
 
 
 @dataclass
@@ -155,6 +158,23 @@ def check_run(directory: Path, *, period_ms: int = 50) -> RunCheck:
     # Frames live end to end in one file; the rows say where each one is. That
     # has to tile the file exactly: a gap means a frame was written that no row
     # claims, an overlap means two rows share pixels.
+    if meta.get("frame_codec") in frames_mod.VIDEO_CODECS:
+        # One video frame per row, in order; the container knows how many.
+        video = directory / "frames.mkv"
+        if not video.is_file():
+            result.problems.append("frames.mkv is missing")
+        else:
+            try:
+                result.frames = frames_mod.count_video_frames(video)
+            except (subprocess.CalledProcessError, ValueError) as exc:
+                result.problems.append(f"frames.mkv unreadable: {exc}")
+                return result
+        if result.frames != result.rows:
+            result.problems.append(
+                f"{result.frames} frames for {result.rows} rows"
+            )
+        return result
+
     blob = directory / "frames.bin"
     size = blob.stat().st_size if blob.is_file() else 0
     result.frames = sum(1 for r in rows if r.get("frame_bytes"))

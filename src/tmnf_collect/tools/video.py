@@ -7,9 +7,10 @@ are not lined up, however good the numbers look.
 
 from __future__ import annotations
 
+import itertools
 import json
-import shutil
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -24,15 +25,6 @@ _TEXT = (236, 238, 242)
 _MUTED = (150, 156, 168)
 _ON = (90, 200, 250)
 _BRAKE = (250, 110, 110)
-
-
-def find_ffmpeg() -> str:
-    found = shutil.which("ffmpeg")
-    if not found:
-        raise RuntimeError(
-            "ffmpeg not found on PATH; install it or add it to PATH to render video"
-        )
-    return found
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -71,19 +63,31 @@ def _key_box(
     )
 
 
-def _run_codec(run_dir: Path) -> str:
-    """Which codec wrote this run; runs predating the field were JPEG."""
+def _run_meta(run_dir: Path) -> dict:
     try:
-        meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+        return json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return frames_mod.LOSSLESS
-    return meta.get("frame_codec", "jpeg")
+        return {"frame_codec": frames_mod.LOSSLESS}
 
 
-def _frame_at(blob, row: dict, codec: str) -> Image.Image:
-    """Pull one frame out of the run's single frames file."""
-    blob.seek(row["frame_offset"])
-    return frames_mod.decode(blob.read(row["frame_bytes"]), codec=codec)
+def _frames(run_dir: Path, rows: list[dict]) -> Iterator[Image.Image]:
+    """The run's frames, one per row, in order."""
+    meta = _run_meta(run_dir)
+    # Runs predating the field were JPEG.
+    codec = meta.get("frame_codec", "jpeg")
+    if codec in frames_mod.VIDEO_CODECS:
+        width, height = meta["frame_size"]
+        video = frames_mod.read_video(run_dir / "frames.mkv", width, height)
+        try:
+            for _row, image in zip(rows, video):
+                yield image
+        finally:
+            video.close()
+        return
+    with (run_dir / "frames.bin").open("rb") as blob:
+        for row in rows:
+            blob.seek(row["frame_offset"])
+            yield frames_mod.decode(blob.read(row["frame_bytes"]), codec=codec)
 
 
 def render_frame(
@@ -180,7 +184,7 @@ def render_run(
     limit: int | None = None,
 ) -> dict:
     """Encode one recorded run into an annotated video."""
-    ffmpeg = find_ffmpeg()
+    ffmpeg = frames_mod.find_ffmpeg()
     rows = [
         json.loads(line)
         for line in (run_dir / "samples.jsonl")
@@ -193,9 +197,8 @@ def render_run(
     if not rows:
         raise RuntimeError(f"{run_dir} has no samples")
 
-    codec = _run_codec(run_dir)
-    blob = (run_dir / "frames.bin").open("rb")
-    first = _frame_at(blob, rows[0], codec)
+    images = _frames(run_dir, rows)
+    first = next(images)
     size = (first.width * scale, first.height * scale + panel)
 
     command = [
@@ -219,14 +222,14 @@ def render_run(
     process = subprocess.Popen(command, stdin=subprocess.PIPE)
     assert process.stdin is not None
     try:
-        for row in rows:
-            with _frame_at(blob, row, codec) as image:
+        for row, image in zip(rows, itertools.chain([first], images)):
+            with image:
                 frame = render_frame(
                     image.convert("RGB"), row, scale=scale, panel=panel
                 )
             process.stdin.write(frame.tobytes())
     finally:
-        blob.close()
+        images.close()
         process.stdin.close()
         code = process.wait()
     if code != 0:

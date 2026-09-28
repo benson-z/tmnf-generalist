@@ -6,8 +6,8 @@ other's profile, and an instance can end up unable to inject any input at all
 on the start line for the whole run.
 
 The game takes a ``/userdir=<path>`` switch, so each instance gets its own copy
-of the small, mutable parts (Profiles, Config) and shares the big read-only
-part (Tracks) through a junction.
+of the small, mutable parts (Profiles, Config) and shares the read-only parts
+(Tracks, Skins/Vehicles) through a junction.
 
 ``Config`` and ``Profiles`` are mirrored from the real user directory on every
 start, not copied once. That makes ``Documents/TmForever`` the single place to
@@ -33,8 +33,11 @@ from ..common.paths import Layout
 SYNCED_DIRS = ("Profiles", "Config")
 # Copied once: per-instance state nobody edits by hand.
 PRIVATE_DIRS = ("Scores",)
-# Shared read-only: this is where staged maps and replays live.
-SHARED_DIRS = ("Tracks",)
+# Shared read-only: staged maps and replays, and the car skin the profile names.
+# Skins/Vehicles rather than all of Skins, because the game makes its own Skins
+# (Avatars, Horns) in a fresh user directory, and a link is only made where
+# nothing stands yet.
+SHARED_DIRS = ("Tracks", "Skins/Vehicles")
 
 
 class UserDirError(RuntimeError):

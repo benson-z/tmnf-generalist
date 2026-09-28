@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from ..common import replays
-from ..common.frames import LOSSLESS
+from ..common.frames import LOSSLESS, VIDEO_CODECS, keyframe_interval
 from ..common.paths import Layout, detect
 from ..common.replays import ChallengeIndex, ReplayError, ReplayInfo
 from . import install, staging
@@ -214,6 +214,7 @@ def run_job(
         with RunWriter(
             out_root / job.output_name,
             codec=codec,
+            fps=1000 / session.period_ms,
         ) as writer:
             def add_sample(sample) -> None:
                 writer.add(sample)
@@ -298,6 +299,15 @@ def run_job(
                     "period_ms": session.period_ms,
                     "frame_size": [session.width, session.height],
                     "frame_codec": codec,
+                    **(
+                        {
+                            "keyframe_interval": keyframe_interval(
+                                1000 / session.period_ms
+                            )
+                        }
+                        if codec in VIDEO_CODECS
+                        else {}
+                    ),
                     "hide_ui": session.hide_ui,
                     "reset_camera": True,  # the plugin always does now
                 }

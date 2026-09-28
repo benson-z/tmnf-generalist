@@ -556,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
     p_collect.add_argument(
         "--frame-codec",
         default=frames_mod.LOSSLESS,
-        choices=[frames_mod.LOSSLESS],
+        choices=list(frames_mod.CODECS),
         help="how frames are stored on disk; see tmnf_collect.common.frames",
     )
     p_collect.add_argument(

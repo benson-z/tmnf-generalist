@@ -7,6 +7,8 @@ recording what the driver saw and what they pressed:
 * **frames** at 20 Hz, 320x240, lossless,
 * **key inputs** at 100 Hz (every physics tick),
 * **car telemetry and camera pose** on every frame,
+* **a magenta car** (body only; see [skins/](skins/make_magenta.py)), the
+  same in every run, so the car never takes on a replay's own paint,
 
 all clocked off the game's physics, not wall time. Every run is checked against
 the replay's own finish time to the millisecond, so a run that did not
@@ -85,8 +87,12 @@ needs `ffmpeg` on PATH.
 out/corpus/
   index.json               every replay, its status, and why anything was skipped
   <replay name>/
-    frames.bin             every frame, QOI + zstd, back to back
-    samples.jsonl          one row per frame: its offset in frames.bin, race time,
+    frames.mkv             every frame, H.265 CRF 18, one video frame per row,
+                           a keyframe every 2 s (meta.json: keyframe_interval)
+                           (frames.bin, QOI + zstd back to back, with
+                           frame_codec: qoi-zstd)
+    samples.jsonl          one row per frame: race time (and, for qoi-zstd, its
+                           offset in frames.bin),
                            keys, analog gas/steer, position, velocity, orientation,
                            speed, checkpoints, camera pose
     inputs.jsonl           one row per 10 ms physics tick: the keys held

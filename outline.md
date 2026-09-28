@@ -129,6 +129,13 @@ does not. For each `.Replay.Gbx`:
   `Documents/TmForever` on every start (one place to change any setting),
   `Scores` copied once, `Tracks` a junction so staged files are visible
   everywhere.
+- **Magenta car, body only.** `skins/Magenta.zip` (solid DXT1 `Diffuse.dds`
+  and `Icon.dds`, no `Details.dds`, so wheels and suspension stay stock) is
+  installed with the plugin into `Skins/Vehicles/StadiumCar`, and
+  `Skins/Vehicles` is linked into each instance (not all of `Skins`: the game
+  makes its own there first). The seeded profile selects it in chunk
+  `0x0308C043`, which names the zip and pins its MD5, so the zip must stay
+  byte-identical.
 - Token, port and instance id go on the command line
   (`/tmnfml_token= /tmnfml_port= /tmnfml_id=`) and the plugin dials *back* to
   the controller. TMLoader wraps every argument into one quoted string, so
@@ -265,6 +272,15 @@ does not. For each `.Replay.Gbx`:
   lane's socket reader. Lossless because JPEG artifacts vary with content, so
   the same corner recorded twice would differ visibly. Costs ~5.8 GB per
   recorded hour (JPEG q80: 0.85 GB).
+- **Default is now `hevc`: H.265 CRF 18, preset veryfast**, one ffmpeg
+  process per run writing `frames.mkv`, one video frame per row, no offsets
+  in the rows. 7.0 KB a frame (~0.5 GB per recorded hour) at 33.6 dB RGB
+  PSNR; eight encoders do 404 frames/s against the 320 that eight lanes at 2×
+  need (`medium`: 268). Closed GOP every 2 s, scene cuts off, for random
+  access at +1.5% size. On Linux, `hevc-vaapi` does the same on the GPU
+  at QP 24 (equal size and PSNR): 20 replays in 137.0 s against 152.8 s for
+  x265 and 138.8 s lossless, because x265 takes CPU the games need. Gives up lossless comparability across
+  re-collections; `qoi-zstd` remains selectable.
 - `inputs.jsonl` holds the ticks, `meta.json` expected against recorded and
   the settings used.
 - `reset()` discards a partial attempt across both queues, in order; a reused
@@ -310,7 +326,8 @@ does not. For each `.Replay.Gbx`:
   dropped points, first sample at 0, contiguous indices, 50 ms gaps only,
   coverage to the finish, no frame drawn before its tick, ticks continuous at
   10 ms from 0 to the finish and agreeing with the samples wherever they
-  coincide, and `frames.bin` tiled exactly by the rows.
+  coincide, and `frames.bin` tiled exactly by the rows (or, for `hevc`,
+  `frames.mkv` holding exactly one frame per row).
 - `clean` moves failing runs to `<dataset>.rejected/<status>/` (a desync is
   worth looking at); `--delete` if not. Do it before training, which reads
   every directory, and before re-collecting.

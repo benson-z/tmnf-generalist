@@ -18,7 +18,8 @@ Frames go into one file per run rather than one file each. Appending to an open
 file measured 0.067ms a frame against 0.647ms for a new small file, and a
 corpus of a few hundred runs is otherwise a couple of hundred thousand tiny
 files to read back at training time. `samples.jsonl` carries the offset and
-length of each frame in `frames.bin`.
+length of each frame in `frames.bin`. The video codecs write `frames.mkv`
+instead, one video frame per row in row order, so its rows carry no offsets.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..common.frames import LOSSLESS, Encoder
+from ..common.frames import LOSSLESS, VIDEO_CODECS, Encoder, VideoEncoder
 from .protocol import Sample, Tick
 
 
@@ -37,6 +38,7 @@ from .protocol import Sample, Tick
 class RunPaths:
     root: Path
     frames: Path
+    video: Path
     samples: Path
     ticks: Path
     meta: Path
@@ -46,6 +48,7 @@ class RunPaths:
         return cls(
             root=root,
             frames=root / "frames.bin",
+            video=root / "frames.mkv",
             samples=root / "samples.jsonl",
             ticks=root / "inputs.jsonl",
             meta=root / "meta.json",
@@ -70,15 +73,18 @@ def tick_record(tick: Tick) -> dict:
 
 
 def sample_record(
-    sample: Sample, index: int, frame_offset: int, frame_bytes: int
+    sample: Sample,
+    index: int,
+    frame_offset: int | None = None,
+    frame_bytes: int | None = None,
 ) -> dict:
     """One row of ``samples.jsonl``."""
-    return {
-        "i": index,
-        "race_time": sample.race_time,
+    record: dict = {"i": index, "race_time": sample.race_time}
+    if frame_offset is not None:
         # Where this frame lives in frames.bin.
-        "frame_offset": frame_offset,
-        "frame_bytes": frame_bytes,
+        record["frame_offset"] = frame_offset
+        record["frame_bytes"] = frame_bytes
+    return record | {
         # The tick the game had reached when the frame was drawn; equal to
         # race_time means image and telemetry are the same instant.
         "render_race_time": sample.render_race_time,
@@ -113,11 +119,17 @@ class RunWriter:
     """Writes one run's frames and records; use as a context manager."""
 
     def __init__(
-        self, root: Path, *, codec: str = LOSSLESS
+        self, root: Path, *, codec: str = LOSSLESS, fps: float = 20.0
     ) -> None:
         self.paths = RunPaths.under(root)
         self.codec = codec
-        self._encoder = Encoder(codec)
+        video = codec in VIDEO_CODECS
+        self._encoder = None if video else Encoder(codec)
+        self._video = (
+            VideoEncoder(self.paths.video, fps=fps, codec=codec)
+            if video
+            else None
+        )
         self.written = 0
         self.ticks = 0
         self.resets = 0
@@ -126,7 +138,9 @@ class RunWriter:
         self.paths.root.mkdir(parents=True, exist_ok=True)
         self._records = self.paths.samples.open("w", encoding="utf-8")
         self._ticks = self.paths.ticks.open("w", encoding="utf-8")
-        self._frames = self.paths.frames.open("wb")
+        self._frames = (
+            None if self._video is not None else self.paths.frames.open("wb")
+        )
 
         # Unbounded on purpose; see the module docstring.
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
@@ -150,6 +164,12 @@ class RunWriter:
                     self._discard_everything()
                     continue
                 _, index, sample = item
+                if self._video is not None:
+                    self._video.add(sample.pixels, sample.width, sample.height)
+                    self._records.write(
+                        json.dumps(sample_record(sample, index)) + "\n"
+                    )
+                    continue
                 payload = self._encoder.encode(
                     sample.pixels, sample.width, sample.height
                 )
@@ -181,8 +201,11 @@ class RunWriter:
     def _discard_everything(self) -> None:
         self._records.seek(0)
         self._records.truncate()
-        self._frames.seek(0)
-        self._frames.truncate()
+        if self._video is not None:
+            self._video.discard()
+        else:
+            self._frames.seek(0)
+            self._frames.truncate()
 
     def add(self, sample: Sample) -> None:
         self._queue.put(("add", self.written, sample))
@@ -215,10 +238,21 @@ class RunWriter:
         self._tick_queue.put(None)
         self._worker.join()
         self._tick_worker.join()
-        self.frame_bytes = self._frames.tell()
+        if self._video is not None:
+            try:
+                self._video.close()
+            except BaseException as exc:
+                self._error = self._error or exc
+            self.frame_bytes = (
+                self.paths.video.stat().st_size
+                if self.paths.video.is_file()
+                else 0
+            )
+        else:
+            self.frame_bytes = self._frames.tell()
+            self._frames.close()
         self._records.close()
         self._ticks.close()
-        self._frames.close()
         if self._error is not None:
             raise self._error
 

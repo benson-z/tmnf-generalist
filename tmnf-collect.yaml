@@ -53,12 +53,13 @@ collect:
   # clips that hijack the camera mid-run.
   keep_intros: false
 
-  # Lossless. QOI packed with zstd-6: 70.0KB a frame at 3669 frames a second
-  # across eight encoder threads, against 66.9KB at 1054/s for lossless WebP
-  # and 75.9KB at 835/s for PNG. Both halves release the GIL, which is what
-  # keeps eight socket readers draining. See tmnf_collect.common.frames.
-  # Costs about 5.8 GB per recorded hour against 0.85 GB for JPEG q80.
-  frame_codec: qoi-zstd
+  # H.265 at CRF 18, preset veryfast, into one frames.mkv per run: 7.0KB a
+  # frame against 88KB for lossless QOI + zstd on the same run, about 0.5 GB
+  # per recorded hour, at 33.6 dB RGB PSNR. Eight encoders reach 404 frames a
+  # second against the 320 that eight lanes at 2x need; `medium` managed only
+  # 268. Needs ffmpeg on PATH. `qoi-zstd` is the lossless alternative.
+  # See tmnf_collect.common.frames.
+  frame_codec: hevc
 
 harvest:
   # Only about half of harvested replays are keyboard, and roughly a tenth will

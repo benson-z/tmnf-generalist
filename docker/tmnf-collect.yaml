@@ -22,7 +22,10 @@ collect:
   period: 50
   show_ui: false
   keep_intros: false
-  frame_codec: qoi-zstd
+  # H.265 on the iGPU's video engine, QP 24 (CRF 18's size and quality): 20/20
+  # ok in 137.0 s against 152.8 s for x265, which competes with the games for
+  # CPU, and 138.8 s for lossless qoi-zstd. 7.2KB a frame, 33.5 dB RGB PSNR.
+  frame_codec: hevc-vaapi
 
 harvest:
   limit: 400
