@@ -14,15 +14,33 @@ dependencies = [
     "rich>=13.9",
 ]
 
+[project.optional-dependencies]
+# Only the training side needs torch: `uv sync --extra train` for NVIDIA (or
+# CPU), `uv sync --extra train-rocm` for the 890M (gfx1150) on ROCm 10.
+train = ["torch>=2.7"]
+train-rocm = [
+    "torch[device-gfx1150]>=2.13; sys_platform != 'darwin'",
+    # torch's own dependencies, listed so the index pins below can apply.
+    "triton; sys_platform != 'darwin'",
+    "rocm; sys_platform != 'darwin'",
+    "rocm-bootstrap; sys_platform != 'darwin'",
+    "rocm-sdk-core; sys_platform != 'darwin'",
+    "rocm-sdk-libraries; sys_platform != 'darwin'",
+    "rocm-sdk-device-gfx1150; sys_platform != 'darwin'",
+    "amd-torch-device-gfx1150; sys_platform != 'darwin'",
+    "amd-torch-device-gfx115x; sys_platform != 'darwin'",
+]
+
 [project.scripts]
 tmnf-collect = "tmnf_collect.cli:main"
+tmnf-train = "tmnf_train.train:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tmnf_collect"]
+packages = ["src/tmnf_collect", "src/tmnf_train"]
 
 [tool.uv]
 # pygbx requires python-lzo, whose newest wheels are cp311, so it would pin the
@@ -30,3 +48,38 @@ packages = ["src/tmnf_collect"]
 # stands in for it on top of lzokay; this marker never matches, so
 # python-lzo is never installed.
 override-dependencies = ["python-lzo; sys_platform == 'never'"]
+# Each extra pins torch to a different build, so only one can be installed.
+conflicts = [[{ extra = "train" }, { extra = "train-rocm" }]]
+
+# PyPI's Windows torch is CPU-only, and the 5070 Ti (Blackwell, sm_120) needs
+# CUDA 12.8 or newer, so `train` takes torch from PyTorch's cu128 index
+# everywhere but macOS.
+#
+# `train-rocm` takes ROCm 10 from AMD's own index rather than PyTorch's, which
+# stops at ROCm 7. There torch is built once and the kernels for each GPU come
+# as a separate `amd-torch-device-<gfx>` package, pulled in by torch's
+# `device-<gfx>` extra; the ROCm runtime itself is a set of `rocm*` wheels.
+# Everything ROCm has to come from this index, so each is pinned below.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "amd-rocm10"
+url = "https://stable.repo.amd.com/rocm/whl-next"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", extra = "train", marker = "sys_platform != 'darwin'" },
+    { index = "amd-rocm10", extra = "train-rocm" },
+]
+triton = [{ index = "amd-rocm10", extra = "train-rocm" }]
+rocm = [{ index = "amd-rocm10", extra = "train-rocm" }]
+rocm-bootstrap = [{ index = "amd-rocm10", extra = "train-rocm" }]
+rocm-sdk-core = [{ index = "amd-rocm10", extra = "train-rocm" }]
+rocm-sdk-libraries = [{ index = "amd-rocm10", extra = "train-rocm" }]
+rocm-sdk-device-gfx1150 = [{ index = "amd-rocm10", extra = "train-rocm" }]
+amd-torch-device-gfx1150 = [{ index = "amd-rocm10", extra = "train-rocm" }]
+amd-torch-device-gfx115x = [{ index = "amd-rocm10", extra = "train-rocm" }]
