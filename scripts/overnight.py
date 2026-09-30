@@ -104,6 +104,15 @@ class TrainLane:
         self.job: dict | None = None
         self.started = 0.0
         self.stalled = False
+        self.retries: dict[str, int] = {}
+
+    def finished_run(self) -> bool:
+        """Whether the current job's final epoch-end checkpoint exists."""
+        from tmnf_train.config import load
+
+        run = self.run_name(self.job)
+        epochs = load(REPO / self.job["config"], self.job.get("set", [])).train.epochs
+        return any((RUNS / run / "checkpoints").glob(f"{run}_e{epochs:02d}_s*_end.pt"))
 
     def check_stall(self, stall_s: float) -> None:
         """Kill a trainer whose metrics log has gone quiet (e.g. a loader
@@ -389,6 +398,11 @@ def step(args, train: TrainLane, ev: EvalLane, stop_at, no_new, no_train, first:
         if train.stalled:
             log(f"train {train.job['id']}: stalled trainer stopped; resuming it")
             train.stalled = False
+        elif not train.finished_run() and train.retries.get(train.job["id"], 0) < 3:
+            # Died before its last epoch (e.g. the NAS mount dropped under it).
+            train.retries[train.job["id"]] = train.retries.get(train.job["id"], 0) + 1
+            log(f"train {train.job['id']}: exited rc {rc} before its final checkpoint; resuming it "
+                f"(retry {train.retries[train.job['id']]})")
         else:
             done[train.job["id"]] = {"kind": "train", "rc": rc, "at": f"{now():%H:%M}"}
             log(f"train {train.job['id']}: exited rc {rc}")
