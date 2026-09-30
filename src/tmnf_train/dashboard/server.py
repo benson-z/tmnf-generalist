@@ -194,10 +194,18 @@ def _cpu_times() -> tuple[int, int]:
 def _processes() -> dict:
     if sys.platform != "win32":
         try:
-            out = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True, timeout=30).stdout
+            out = subprocess.run(["ps", "-eo", "pid=,ppid=,args="], capture_output=True, text=True, timeout=30).stdout
         except (OSError, subprocess.SubprocessError):
             return {}
-        cmd = [c for c in out.splitlines()[1:] if "tmnf_train" in c or "tmnf-train" in c]
+        rows = []
+        for line in out.splitlines():
+            pid, ppid, args = (line.split(None, 2) + ["", "", ""])[:3]
+            if "tmnf_train" in args or "tmnf-train" in args:
+                rows.append((pid, ppid, args))
+        # Loader workers and compile workers are children with a matching
+        # command line; count only the top process of each.
+        pids = {r[0] for r in rows}
+        cmd = [a for pid, ppid, a in rows if ppid not in pids]
         return {
             "trainer": sum(1 for c in cmd if re.search(r"\btrain\b", c) and "eval" not in c and "serve" not in c),
             "eval_watch": sum(1 for c in cmd if "eval-watch" in c),
