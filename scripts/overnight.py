@@ -293,7 +293,8 @@ class EvalLane:
             append_metrics(job["run"], {"kind": "eval_error", "checkpoint": job["eval_id"], "error": f"rc {rc}"})
             return False
         brief = {m: (v.get("finish_rate"), (v.get("checkpoints") or {}).get("mean")) for m, v in s.get("maps", {}).items()}
-        log(f"eval {job['id']}: done in {wall}s: {brief}")
+        errs = sum(v.get("harness_errors", 0) or 0 for v in s.get("maps", {}).values())
+        log(f"eval {job['id']}: done in {wall}s: {brief}" + (f"; HARNESS ERRORS {errs}" if errs else ""))
         append_metrics(job["run"], {"kind": "eval", "checkpoint": job["eval_id"], "device": "remote", **s})
         return True
 
