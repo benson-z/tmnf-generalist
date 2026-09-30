@@ -102,6 +102,29 @@ class TrainLane:
     def __init__(self):
         self.proc: subprocess.Popen | None = None
         self.job: dict | None = None
+        self.started = 0.0
+        self.stalled = False
+
+    def check_stall(self, stall_s: float) -> None:
+        """Kill a trainer whose metrics log has gone quiet (e.g. a loader
+        worker lost a batch and the loop waits for it forever); the queue then
+        restarts the same job with --resume."""
+        if not self.busy() or time.time() - self.started < stall_s:
+            return
+        try:
+            quiet = time.time() - (RUNS / self.run_name(self.job) / "metrics.jsonl").stat().st_mtime
+        except OSError:
+            return
+        if quiet < stall_s:
+            return
+        log(f"train {self.job['id']}: no log line for {quiet:.0f}s; killing it to resume")
+        self.stalled = True
+        self.proc.terminate()
+        try:
+            self.proc.wait(60)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+        subprocess.run(["pkill", "-9", "-f", f"tmnf_train train --config {self.job['config']}"])
 
     def busy(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -118,6 +141,7 @@ class TrainLane:
         log(f"train {job['id']}: adopting running trainer pid {pid}")
         self.proc = _Adopted(pid)
         self.job = job
+        self.started = time.time()
 
     def start(self, job: dict) -> None:
         run = self.run_name(job)
@@ -131,6 +155,7 @@ class TrainLane:
         log(f"train {job['id']}: start {run}{' (resume)' if resume else ''}: {shlex.join(cmd[3:])}")
         self.proc = subprocess.Popen(cmd, cwd=REPO, stdout=out, stderr=subprocess.STDOUT)
         self.job = job
+        self.started = time.time()
 
     @staticmethod
     def run_name(job: dict) -> str:
@@ -317,6 +342,7 @@ def main() -> None:
     ap.add_argument("--no-train-after", default="07:15", help="no new training starts after this")
     ap.add_argument("--stop-at", default="08:15", help="stop everything (HH:MM)")
     ap.add_argument("--poll", type=float, default=20.0)
+    ap.add_argument("--stall-s", type=float, default=600.0, help="restart a trainer silent this long")
     args = ap.parse_args()
 
     QDIR.mkdir(parents=True, exist_ok=True)
@@ -357,10 +383,15 @@ def step(args, train: TrainLane, ev: EvalLane, stop_at, no_new, no_train, first:
         ev.adopt_running(queue)
 
     # train lane
+    train.check_stall(args.stall_s)
     if train.job is not None and not train.busy():
         rc = train.proc.returncode
-        done[train.job["id"]] = {"kind": "train", "rc": rc, "at": f"{now():%H:%M}"}
-        log(f"train {train.job['id']}: exited rc {rc}")
+        if train.stalled:
+            log(f"train {train.job['id']}: stalled trainer stopped; resuming it")
+            train.stalled = False
+        else:
+            done[train.job["id"]] = {"kind": "train", "rc": rc, "at": f"{now():%H:%M}"}
+            log(f"train {train.job['id']}: exited rc {rc}")
         train.job = None
     if train.job is None and now() < no_train:
         nxt = next((j for j in queue["train"] if j["id"] not in done and not j.get("hold")), None)
