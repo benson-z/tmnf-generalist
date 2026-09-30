@@ -19,6 +19,9 @@ It can also build the replay corpus for you from
 run for each, and keep only keyboard drivers.
 
 How it works, and why it works that way, is in [outline.md](outline.md).
+Training and evaluating a driving model on what it records is in
+[README-train.md](README-train.md); the corpus itself is described in
+[docs/DATA_REPORT.md](docs/DATA_REPORT.md).
 
 ## Requirements
 

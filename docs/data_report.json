@@ -1,0 +1,918 @@
+{
+ "corpus": "Z:\\application_storage\\tmnf-ml\\train_data\\corpus2",
+ "run_dirs": 2518,
+ "status": {
+  "ok": 2483,
+  "unfinished": 25,
+  "no_meta": 10
+ },
+ "file_sets": {
+  "frames.mkv,inputs.jsonl,meta.json,samples.jsonl": 2508,
+  "inputs.jsonl,samples.jsonl": 10
+ },
+ "meta_keys": [
+  "arming_retries",
+  "camera",
+  "clean_start",
+  "detail",
+  "driving",
+  "dropped_sample_points",
+  "frame_barrier",
+  "frame_codec",
+  "frame_size",
+  "hide_ui",
+  "input_ticks",
+  "keyframe_interval",
+  "map_file",
+  "map_uid",
+  "period_ms",
+  "recorded_finish_time_ms",
+  "replay",
+  "replay_race_time_ms",
+  "replay_respawns",
+  "reset_camera",
+  "restart_observed",
+  "samples",
+  "speed",
+  "status",
+  "tick_period_ms"
+ ],
+ "sample_keys": [
+  "brake_f",
+  "camera_fov",
+  "camera_position",
+  "camera_yaw_pitch_roll",
+  "checkpoints",
+  "down",
+  "dropped_so_far",
+  "finished",
+  "gas",
+  "gas_f",
+  "gearbox",
+  "i",
+  "left",
+  "local_speed",
+  "position",
+  "race_time",
+  "render_race_time",
+  "right",
+  "sliding",
+  "speed_kmh",
+  "steer",
+  "steer_f",
+  "up",
+  "velocity",
+  "yaw_pitch_roll"
+ ],
+ "tick_keys": [
+  "down",
+  "left",
+  "race_time",
+  "right",
+  "up"
+ ],
+ "bytes": {
+  "total_all_dirs": 17812415994,
+  "ok_runs": 17680302549,
+  "by_file": {
+   "frames.mkv": 15755799997,
+   "inputs.jsonl": 821120909,
+   "meta.json": 1945487,
+   "samples.jsonl": 1233549601
+  }
+ },
+ "alignment": {
+  "runs_sample_i_is_index": 2483,
+  "runs_sample_times_50i": 2483,
+  "runs_tick_times_10j": 2483,
+  "runs_with_render_lag": 0,
+  "runs_ticks_eq_5x_samples_minus_4": 489,
+  "runs_last_tick_eq_last_sample": 489,
+  "runs_last_sample_eq_finish": 489,
+  "runs_finish_multiple_of_50": 489,
+  "sample_rows_key_mismatch_vs_tick": 0,
+  "finished_rows_per_run": {
+   "0": 2483
+  }
+ },
+ "run_length_s": {
+  "runs": 2483,
+  "total_hours": 28.787,
+  "min": 21.74,
+  "p5": 28.144000000000002,
+  "p25": 35.555,
+  "median": 41.64,
+  "p75": 46.69,
+  "p95": 57.69,
+  "max": 73.09,
+  "hist_10s": {
+   "0-9": 0,
+   "10-19": 0,
+   "20-29": 233,
+   "30-39": 786,
+   "40-49": 1082,
+   "50-59": 308,
+   "60-69": 67,
+   "70-79": 7,
+   "80-89": 0,
+   "90-99": 0,
+   "100-109": 0,
+   "110-119": 0,
+   "120-129": 0,
+   "130-139": 0,
+   "140-149": 0,
+   "150-159": 0,
+   "160-169": 0,
+   "170-179": 0,
+   ">=180": 0
+  }
+ },
+ "total_frames_ok": 2074121,
+ "total_ticks_ok": 10365626,
+ "maps": {
+  "distinct_uids": 2483,
+  "uid_repeat_hist": {
+   "1": 2483
+  },
+  "distinct_map_files": 2483,
+  "file_repeat_hist": {
+   "1": 2483
+  },
+  "b01_race_present": false
+ },
+ "respawns": {
+  "replay_respawns_hist": {
+   "0": 2467,
+   "1": 8,
+   "5": 2,
+   "3": 3,
+   "2": 3
+  },
+  "runs_with_position_jumps": 6,
+  "position_jumps_total": 16,
+  "examples": [
+   [
+    "tmx-11173660",
+    [
+     421
+    ]
+   ],
+   [
+    "tmx-123450",
+    [
+     165,
+     394,
+     547,
+     745,
+     919
+    ]
+   ],
+   [
+    "tmx-13218",
+    [
+     607,
+     720,
+     829,
+     939,
+     1054
+    ]
+   ],
+   [
+    "tmx-1616250",
+    [
+     264,
+     529,
+     732
+    ]
+   ],
+   [
+    "tmx-6303483",
+    [
+     431
+    ]
+   ],
+   [
+    "tmx-975959",
+    [
+     258
+    ]
+   ]
+  ]
+ },
+ "slow_frames_after_1s_total": 278,
+ "keys": {
+  "up": {
+   "held_fraction": 0.9826,
+   "press_ticks": {
+    "n": 10457,
+    "mean": 974.05,
+    "p1": 5.0,
+    "p5": 13.0,
+    "p25": 131.0,
+    "p50": 525.0,
+    "p75": 1146.0,
+    "p95": 4117.399999999998,
+    "p99": 5022.720000000007,
+    "max": 7309,
+    "frac_1_tick": 0.0006,
+    "frac_lt_5_ticks": 0.0063
+   },
+   "press_hist": {
+    "1": 6,
+    "2": 16,
+    "3": 20,
+    "4": 24,
+    "5": 44,
+    "6-7": 85,
+    "8-9": 96,
+    "10-14": 311,
+    "15-19": 259,
+    "20-29": 407,
+    "30-49": 501,
+    "50-99": 644,
+    "100-199": 605,
+    "200-499": 2028,
+    ">=500": 5411
+   },
+   "gap_ticks": {
+    "n": 7976,
+    "mean": 19.23,
+    "p1": 2.0,
+    "p5": 4.0,
+    "p25": 8.0,
+    "p50": 13.0,
+    "p75": 24.0,
+    "p95": 55.0,
+    "p99": 84.25,
+    "max": 1300,
+    "frac_1_tick": 0.0044,
+    "frac_lt_5_ticks": 0.0667
+   },
+   "gap_hist": {
+    "1": 35,
+    "2": 83,
+    "3": 192,
+    "4": 222,
+    "5": 317,
+    "6-7": 795,
+    "8-9": 975,
+    "10-14": 1788,
+    "15-19": 965,
+    "20-29": 1202,
+    "30-49": 909,
+    "50-99": 448,
+    "100-199": 41,
+    "200-499": 3,
+    ">=500": 1
+   }
+  },
+  "down": {
+   "held_fraction": 0.0441,
+   "press_ticks": {
+    "n": 12622,
+    "mean": 36.23,
+    "p1": 3.0,
+    "p5": 5.0,
+    "p25": 11.0,
+    "p50": 26.0,
+    "p75": 55.0,
+    "p95": 92.0,
+    "p99": 117.0,
+    "max": 4891,
+    "frac_1_tick": 0.001,
+    "frac_lt_5_ticks": 0.028
+   },
+   "press_hist": {
+    "1": 13,
+    "2": 40,
+    "3": 117,
+    "4": 184,
+    "5": 308,
+    "6-7": 815,
+    "8-9": 1012,
+    "10-14": 1912,
+    "15-19": 1053,
+    "20-29": 1292,
+    "30-49": 2261,
+    "50-99": 3221,
+    "100-199": 385,
+    "200-499": 3,
+    ">=500": 6
+   },
+   "gap_ticks": {
+    "n": 10910,
+    "mean": 344.09,
+    "p1": 7.0,
+    "p5": 13.0,
+    "p25": 88.0,
+    "p50": 306.0,
+    "p75": 474.0,
+    "p95": 864.0,
+    "p99": 1533.9099999999999,
+    "max": 4884,
+    "frac_1_tick": 0.0,
+    "frac_lt_5_ticks": 0.0033
+   },
+   "gap_hist": {
+    "1": 0,
+    "2": 6,
+    "3": 16,
+    "4": 14,
+    "5": 26,
+    "6-7": 83,
+    "8-9": 139,
+    "10-14": 383,
+    "15-19": 328,
+    "20-29": 495,
+    "30-49": 688,
+    "50-99": 631,
+    "100-199": 914,
+    "200-499": 4754,
+    ">=500": 2433
+   }
+  },
+  "left": {
+   "held_fraction": 0.265,
+   "press_ticks": {
+    "n": 71890,
+    "mean": 38.21,
+    "p1": 3.0,
+    "p5": 5.0,
+    "p25": 9.0,
+    "p50": 14.0,
+    "p75": 33.0,
+    "p95": 177.0,
+    "p99": 335.0,
+    "max": 7062,
+    "frac_1_tick": 0.0013,
+    "frac_lt_5_ticks": 0.0403
+   },
+   "press_hist": {
+    "1": 97,
+    "2": 296,
+    "3": 1050,
+    "4": 1452,
+    "5": 2366,
+    "6-7": 6601,
+    "8-9": 8402,
+    "10-14": 17053,
+    "15-19": 7901,
+    "20-29": 7313,
+    "30-49": 6436,
+    "50-99": 5871,
+    "100-199": 4002,
+    "200-499": 3029,
+    ">=500": 21
+   },
+   "gap_ticks": {
+    "n": 69409,
+    "mean": 93.74,
+    "p1": 3.0,
+    "p5": 6.0,
+    "p25": 10.0,
+    "p50": 24.0,
+    "p75": 83.0,
+    "p95": 464.0,
+    "p99": 832.0,
+    "max": 2783,
+    "frac_1_tick": 0.0012,
+    "frac_lt_5_ticks": 0.025
+   },
+   "gap_hist": {
+    "1": 80,
+    "2": 205,
+    "3": 613,
+    "4": 836,
+    "5": 1531,
+    "6-7": 5121,
+    "8-9": 6787,
+    "10-14": 11039,
+    "15-19": 5419,
+    "20-29": 6303,
+    "30-49": 7490,
+    "50-99": 8522,
+    "100-199": 6096,
+    "200-499": 6368,
+    ">=500": 2999
+   }
+  },
+  "right": {
+   "held_fraction": 0.2728,
+   "press_ticks": {
+    "n": 71223,
+    "mean": 39.71,
+    "p1": 3.0,
+    "p5": 5.0,
+    "p25": 9.0,
+    "p50": 15.0,
+    "p75": 35.0,
+    "p95": 181.89999999999418,
+    "p99": 335.0,
+    "max": 6045,
+    "frac_1_tick": 0.0018,
+    "frac_lt_5_ticks": 0.0388
+   },
+   "press_hist": {
+    "1": 126,
+    "2": 268,
+    "3": 1047,
+    "4": 1319,
+    "5": 2248,
+    "6-7": 6307,
+    "8-9": 8015,
+    "10-14": 16201,
+    "15-19": 7805,
+    "20-29": 7487,
+    "30-49": 6848,
+    "50-99": 6203,
+    "100-199": 4231,
+    "200-499": 3086,
+    ">=500": 32
+   },
+   "gap_ticks": {
+    "n": 68742,
+    "mean": 94.39,
+    "p1": 3.0,
+    "p5": 6.0,
+    "p25": 11.0,
+    "p50": 24.0,
+    "p75": 83.0,
+    "p95": 471.0,
+    "p99": 844.5899999999965,
+    "max": 2488,
+    "frac_1_tick": 0.0012,
+    "frac_lt_5_ticks": 0.0245
+   },
+   "gap_hist": {
+    "1": 84,
+    "2": 197,
+    "3": 600,
+    "4": 803,
+    "5": 1370,
+    "6-7": 4627,
+    "8-9": 6478,
+    "10-14": 11284,
+    "15-19": 5572,
+    "20-29": 6494,
+    "30-49": 7545,
+    "50-99": 8430,
+    "100-199": 5882,
+    "200-499": 6343,
+    ">=500": 3033
+   }
+  }
+ },
+ "both_left_right_ticks": 2277,
+ "both_up_down_ticks": 398698,
+ "mixed_50ms_blocks_frac": 0.0317,
+ "video_probe": [
+  {
+   "run": "tmx-10007900",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "608",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-1093367",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "732",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-12227294",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "945",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-13521813",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "819",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-1636064",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "696",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-1938287",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "1116",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-2209149",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "965",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-2548157",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "855",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-2869202",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "570",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-324447",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "857",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-3644851",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "589",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-3961906",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "1077",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-4283920",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "717",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-4685378",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "1167",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-5197184",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "1353",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-573231",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "811",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-632684",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "893",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-7039752",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "1212",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-7903040",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "1021",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  },
+  {
+   "run": "tmx-88616",
+   "codec_name": "hevc",
+   "profile": "Main",
+   "width": 320,
+   "height": 240,
+   "has_b_frames": 0,
+   "pix_fmt": "yuv420p",
+   "r_frame_rate": "20/1",
+   "nb_read_packets": "919",
+   "keyframe_indices_head": [
+    0,
+    40,
+    80,
+    120,
+    160,
+    200
+   ],
+   "keyframe_spacing": [
+    40
+   ]
+  }
+ ],
+ "video_frames_match_rows": 20,
+ "reencode_trial": {
+  "runs": 6,
+  "source_bytes": 36582433,
+  "reencoded_bytes": 33849015,
+  "ratio": 0.925,
+  "projected_total_frames_bytes": 14574114997
+ }
+}
