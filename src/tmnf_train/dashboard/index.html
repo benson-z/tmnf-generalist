@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Training Monitor</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #16181d; --muted: #667085; --line: #e4e7ec; --grid: #eef0f3;
+  --accent: #2563eb; --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
+  --s1: #2563eb; --s2: #db2777; --s3: #059669; --s4: #d97706; --s5: #7c3aed; --s6: #0891b2;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1115; --panel: #171a21; --ink: #e8eaf0; --muted: #98a2b3; --line: #262b36; --grid: #1f242e;
+    --accent: #60a5fa; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+    --s1: #60a5fa; --s2: #f472b6; --s3: #34d399; --s4: #fbbf24; --s5: #a78bfa; --s6: #22d3ee;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 16px 24px;
+  border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+header .run { color: var(--muted); font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.pills { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.pill.off { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+main { padding: 20px 24px 40px; max-width: 1500px; margin: 0 auto; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 28px 0 10px; font-weight: 600; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.card .k { color: var(--muted); font-size: 12px; }
+.card .v { font-size: 22px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.card .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.bar { height: 6px; background: var(--grid); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+.bar > div { height: 100%; background: var(--accent); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 12px; }
+.chart { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 8px; position: relative; }
+.chart h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; }
+.chart svg { width: 100%; height: 190px; display: block; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 8px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); display: none; white-space: nowrap; z-index: 3; }
+.empty { color: var(--muted); font-size: 13px; padding: 70px 0; text-align: center; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 13px; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; background: color-mix(in srgb, var(--grid) 60%, var(--panel)); }
+td.num { font-variant-numeric: tabular-nums; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--grid); color: var(--muted); margin-left: 4px; }
+.vids { display: flex; flex-wrap: wrap; gap: 4px; }
+.vids a { font-size: 12px; color: var(--accent); text-decoration: none; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; }
+.vids a:hover { border-color: var(--accent); }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; align-items: center; justify-content: center; z-index: 10; padding: 16px; }
+.modal video { max-width: min(1000px, 100%); max-height: 85vh; background: #000; border-radius: 8px; }
+.modal .cap { color: #fff; font-size: 13px; margin-top: 8px; text-align: center; font-family: ui-monospace, Consolas, monospace; }
+.foot { color: var(--muted); font-size: 12px; margin-top: 24px; }
+@media (max-width: 520px) { .grid { grid-template-columns: 1fr; } main, header { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Training monitor</h1><span class="run" id="run">…</span>
+  <div class="pills" id="pills"></div>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+
+  <h2>Hardware · up to the last 30 min</h2>
+  <div class="grid">
+    <div class="chart"><h3>GPU utilisation (%)</h3><div id="c_gpu"></div></div>
+    <div class="chart"><h3>NVIDIA memory (GB)</h3><div id="c_mem"></div></div>
+    <div class="chart"><h3>NVIDIA temperature (°C) and power (W)</h3><div id="c_temp"></div></div>
+    <div class="chart"><h3>CPU (%) and RAM used (GB)</h3><div id="c_cpu"></div></div>
+  </div>
+
+  <h2>Training</h2>
+  <div class="grid">
+    <div class="chart"><h3>Policy loss</h3><div id="c_pol"></div></div>
+    <div class="chart"><h3>Auxiliary losses</h3><div id="c_aux"></div></div>
+    <div class="chart"><h3>Validation: steering</h3><div id="c_steer"></div></div>
+    <div class="chart"><h3>Validation: rare actions</h3><div id="c_rare"></div></div>
+    <div class="chart"><h3>Throughput (frames/s) and data wait (%)</h3><div id="c_thr"></div></div>
+    <div class="chart"><h3>Learning rate and grad norm</h3><div id="c_lr"></div></div>
+  </div>
+
+  <h2>Evals</h2>
+  <div id="evals"></div>
+  <div class="foot" id="foot"></div>
+</main>
+<div class="modal" id="modal"><div><video id="player" controls autoplay></video><div class="cap" id="cap"></div></div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const S = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"];
+const fmt = (v, d = 2) => v == null || isNaN(v) ? "–" : (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString() : (+v).toFixed(d));
+const dur = (s) => { if (s == null) return "–"; s = Math.max(0, s); const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h}h ${m}m` : `${m}m`; };
+const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+// Minimal SVG line chart: series = [{name, pts: [[x, y]], color, axis: 0|1, dash}]
+function chart(host, series, o = {}) {
+  series = series.filter(s => s.pts.length);
+  if (!series.length) { host.innerHTML = '<div class="empty">No data yet</div>'; return; }
+  const W = 600, H = 190, L = 44, R = o.right ? 44 : 12, T = 8, B = 22;
+  const xs = series.flatMap(s => s.pts.map(p => p[0]));
+  let x0 = o.xmin ?? Math.min(...xs), x1 = Math.max(...xs); if (x1 === x0) x1 = x0 + 1;
+  const range = (axis) => {
+    const ys = series.filter(s => (s.axis || 0) === axis).flatMap(s => s.pts.map(p => p[1])).filter(v => v != null && isFinite(v));
+    if (!ys.length) return [0, 1];
+    let a = o[`ymin${axis}`] ?? Math.min(...ys), b = o[`ymax${axis}`] ?? Math.max(...ys);
+    if (b === a) { b = a + 1; a = a - (o[`ymin${axis}`] != null ? 0 : 1); }
+    const pad = (b - a) * 0.06; return [o[`ymin${axis}`] ?? a - pad, o[`ymax${axis}`] ?? b + pad];
+  };
+  const yr = [range(0), range(1)];
+  const X = (x) => L + (x - x0) / (x1 - x0) * (W - L - R);
+  const Y = (y, a) => T + (1 - (y - yr[a][0]) / (yr[a][1] - yr[a][0])) * (H - T - B);
+  const grid = css("--grid"), muted = css("--muted");
+  let g = "";
+  for (let i = 0; i <= 4; i++) {
+    const y = T + i * (H - T - B) / 4, v0 = yr[0][1] - i * (yr[0][1] - yr[0][0]) / 4;
+    g += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="${grid}"/>`;
+    g += `<text x="${L - 6}" y="${y + 4}" fill="${muted}" font-size="11" text-anchor="end">${fmt(v0, Math.abs(v0) < 10 ? 2 : 0)}</text>`;
+    if (o.right) { const v1 = yr[1][1] - i * (yr[1][1] - yr[1][0]) / 4;
+      g += `<text x="${W - R + 6}" y="${y + 4}" fill="${muted}" font-size="11">${fmt(v1, Math.abs(v1) < 10 ? 2 : 0)}</text>`; }
+  }
+  for (let i = 0; i <= 4; i++) {
+    const x = x0 + i * (x1 - x0) / 4;
+    g += `<text x="${X(x)}" y="${H - 5}" fill="${muted}" font-size="11" text-anchor="${i === 0 ? "start" : i === 4 ? "end" : "middle"}">${(o.xfmt || (v => fmt(v, 0)))(x)}</text>`;
+  }
+  let paths = "";
+  series.forEach((s, i) => {
+    s.color = s.color || css(S[i % S.length]);
+    let d = "", pen = false;
+    for (const [x, y] of s.pts) {
+      if (y == null || !isFinite(y)) { pen = false; continue; }
+      d += `${pen ? "L" : "M"}${X(x).toFixed(1)},${Y(y, s.axis || 0).toFixed(1)}`; pen = true;
+    }
+    paths += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width || 1.8}" ${s.dash ? 'stroke-dasharray="4 3"' : ""} stroke-linejoin="round"/>`;
+    if (s.dots) for (const [x, y] of s.pts) if (y != null) paths += `<circle cx="${X(x)}" cy="${Y(y, s.axis || 0)}" r="2.6" fill="${s.color}"/>`;
+  });
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${g}${paths}<line class="hl" y1="${T}" y2="${H - B}" stroke="${muted}" stroke-dasharray="2 3" visibility="hidden"/></svg>
+    <div class="legend">${series.map(s => `<span><i style="background:${s.color}"></i>${s.name}</span>`).join("")}</div><div class="tip"></div>`;
+  const svg = host.querySelector("svg"), tip = host.querySelector(".tip"), hl = host.querySelector(".hl");
+  svg.onmousemove = (e) => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * W;
+    const x = x0 + (px - L) / (W - L - R) * (x1 - x0);
+    const rows = series.map(s => { let best = null; for (const p of s.pts) if (best == null || Math.abs(p[0] - x) < Math.abs(best[0] - x)) best = p;
+      return best ? `<span style="color:${s.color}">●</span> ${s.name}: <b>${fmt(best[1], 3)}</b>` : ""; });
+    hl.setAttribute("x1", X(Math.min(x1, Math.max(x0, x)))); hl.setAttribute("x2", X(Math.min(x1, Math.max(x0, x)))); hl.setAttribute("visibility", "visible");
+    tip.innerHTML = `<div style="color:${muted}">${(o.xfmt || (v => fmt(v, 0)))(x)}</div>` + rows.join("<br>");
+    tip.style.display = "block";
+    const hr = host.getBoundingClientRect();
+    tip.style.left = Math.min(e.clientX - hr.left + 12, hr.width - tip.offsetWidth - 4) + "px"; tip.style.top = (e.clientY - hr.top + 12) + "px";
+  };
+  svg.onmouseleave = () => { tip.style.display = "none"; hl.setAttribute("visibility", "hidden"); };
+}
+
+const pts = (rows, key, x = "step", scale = 1) => rows.filter(r => r[key] != null).map(r => [r[x], r[key] * scale]);
+async function get(u) { const r = await fetch(u, { cache: "no-store" }); return r.json(); }
+
+async function refreshStatus() {
+  const s = await get("/api/status");
+  $("run").textContent = `${s.run} · ${s.label_mode} labels`;
+  const p = s.processes || {};
+  const pill = (name, n) => `<span class="pill ${n ? "on" : "off"}">${name}${n > 1 ? " ×" + n : ""} ${n ? "running" : "stopped"}</span>`;
+  $("pills").innerHTML = pill("trainer", p.trainer) + pill("eval watcher", p.eval_watch) + `<span class="pill ${p.games ? "on" : ""}">games: ${p.games ?? "–"}</span>`;
+  const pct = s.total_steps ? s.step / s.total_steps * 100 : 0;
+  const stale = s.last_log_age_s != null && s.last_log_age_s > 180;
+  $("cards").innerHTML = `
+    <div class="card"><div class="k">Progress</div><div class="v">${fmt(pct, 1)}%</div>
+      <div class="s">step ${fmt(s.step, 0)} / ${fmt(s.total_steps, 0)}</div><div class="bar"><div style="width:${pct}%"></div></div></div>
+    <div class="card"><div class="k">Epoch</div><div class="v">${s.epoch != null ? fmt(s.epoch, 2) : "–"} / ${s.epochs}</div>
+      <div class="s">${fmt(s.steps_per_epoch, 0)} steps each</div></div>
+    <div class="card"><div class="k">ETA</div><div class="v">${dur(s.eta_s)}</div>
+      <div class="s">${s.eta_s != null ? "done ≈ " + clock(Date.now() / 1000 + s.eta_s) : ""}</div></div>
+    <div class="card"><div class="k">Throughput</div><div class="v">${fmt(s.frames_per_s, 0)}</div><div class="s">frames / s</div></div>
+    <div class="card"><div class="k">Waiting on data</div><div class="v">${s.data_wait_frac != null ? fmt(s.data_wait_frac * 100, 1) + "%" : "–"}</div><div class="s">of the last log interval</div></div>
+    <div class="card"><div class="k">Peak VRAM</div><div class="v">${fmt(s.peak_vram_gb, 2)}</div><div class="s">GB allocated</div></div>
+    <div class="card"><div class="k">Last log</div><div class="v" style="color:${stale ? "var(--warn)" : "inherit"}">${s.last_log_age_s != null ? dur(s.last_log_age_s) + " ago" : "–"}</div>
+      <div class="s">${(s.checkpoints || []).length} checkpoints</div></div>`;
+}
+
+async function refreshHw() {
+  const since = Date.now() / 1000 - 1800, h = await get(`/api/hw?since=${since}`);
+  const nv = h.nvidia, c = h.counters, tf = (t) => clock(t);
+  const first = Math.min(...[nv[0]?.t, c[0]?.t].filter(Boolean), Date.now() / 1000 - 60);
+  const o = { xmin: Math.max(since, first), xfmt: tf };
+  chart($("c_gpu"), [
+    { name: h.nvidia_name || "NVIDIA", pts: nv.map(s => [s.t, s.util]) },
+    { name: "iGPU (Windows counters)", pts: c.map(s => [s.t, s.igpu_util]) },
+  ], { ...o, ymin0: 0, ymax0: 100 });
+  chart($("c_mem"), [
+    { name: "used", pts: nv.map(s => [s.t, s.mem_used / 1024]) },
+    { name: "total", pts: nv.map(s => [s.t, s.mem_total / 1024]), dash: true, width: 1 },
+  ], { ...o, ymin0: 0 });
+  chart($("c_temp"), [
+    { name: "temperature °C", pts: nv.map(s => [s.t, s.temp]) },
+    { name: "power W (right)", pts: nv.map(s => [s.t, s.power]), axis: 1 },
+  ], { ...o, right: true, ymin1: 0 });
+  chart($("c_cpu"), [
+    { name: "CPU %", pts: c.map(s => [s.t, s.cpu]) },
+    { name: "RAM used GB (right)", pts: c.map(s => [s.t, s.ram_used_gb]), axis: 1 },
+  ], { ...o, right: true, ymin0: 0, ymax0: 100, ymin1: 0, ymax1: c.length ? c[c.length - 1].ram_total_gb : undefined });
+}
+
+async function refreshMetrics() {
+  const rows = await get("/api/metrics");
+  const tr = rows.filter(r => r.kind === "train"), va = rows.filter(r => r.kind === "val");
+  chart($("c_pol"), [
+    { name: "train", pts: pts(tr, "loss_policy") },
+    { name: "val", pts: pts(va, "loss_policy"), dots: true },
+    { name: "val CE vs majority label", pts: pts(va, "ce_hard"), dots: true, dash: true },
+  ]);
+  chart($("c_aux"), [
+    { name: "path NLL (train)", pts: pts(tr, "loss_path") },
+    { name: "progress (train)", pts: pts(tr, "loss_progress") },
+    { name: "path NLL (val)", pts: pts(va, "loss_path"), dots: true, dash: true },
+    { name: "progress (val)", pts: pts(va, "loss_progress"), dots: true, dash: true },
+    { name: "action chunk (train)", pts: pts(tr, "loss_chunk") },
+    { name: "action chunk (val)", pts: pts(va, "loss_chunk"), dots: true, dash: true },
+  ]);
+  chart($("c_steer"), [
+    { name: "action acc", pts: pts(va, "acc"), dots: true },
+    { name: "steer acc", pts: pts(va, "acc_steer"), dots: true },
+    { name: "steer acc at changes", pts: pts(va, "acc_steer_at_change"), dots: true },
+    { name: "recall left", pts: pts(va, "recall_steer_left"), dots: true, dash: true },
+    { name: "recall right", pts: pts(va, "recall_steer_right"), dots: true, dash: true },
+  ], { ymin0: 0, ymax0: 1 });
+  chart($("c_rare"), [
+    { name: "recall brake", pts: pts(va, "recall_brake"), dots: true },
+    { name: "recall no gas", pts: pts(va, "recall_no_gas"), dots: true },
+    { name: "recall no steer", pts: pts(va, "recall_steer_none"), dots: true },
+  ], { ymin0: 0, ymax0: 1 });
+  chart($("c_thr"), [
+    { name: "frames/s", pts: pts(tr, "frames_per_s") },
+    { name: "data wait % (right)", pts: pts(tr, "data_wait_frac", "step", 100), axis: 1 },
+  ], { right: true, ymin0: 0, ymin1: 0 });
+  chart($("c_lr"), [
+    { name: "lr ×1e4", pts: pts(tr, "lr", "step", 1e4) },
+    { name: "grad norm (right)", pts: pts(tr, "grad_norm"), axis: 1 },
+  ], { right: true, ymin0: 0, ymin1: 0 });
+}
+
+function evalCell(m) {
+  if (!m) return "–";
+  if (m.in_progress) return `<span class="tag">running</span> ${m.rollouts} done`;
+  const er = Object.entries(m.end_reasons || {}).map(([k, v]) => `${v} ${k}`).join(", ");
+  let s = `${er}<br>checkpoints max ${fmt(m.checkpoints?.max, 0)} · ${fmt(m.elapsed_race_s?.mean, 1)}s avg`;
+  if (m.finish_rate) s += `<br><b>finish ${fmt(m.finish_rate * 100, 0)}%</b> · best ${fmt(m.finish_time_s?.min, 2)}s`;
+  if (m.time_to_leave_line_s || m.never_left_line != null)
+    s += `<br>leaves line ${fmt(m.time_to_leave_line_s?.mean, 1)}s · reached ${fmt((m.demo_fraction_reached?.max ?? 0) * 100, 0)}%`;
+  return s;
+}
+
+async function refreshEvals() {
+  const ev = await get("/api/evals");
+  if (!ev.length) { $("evals").innerHTML = '<div class="card empty">No evals yet</div>'; return; }
+  const maps = [...new Set(ev.flatMap(e => Object.keys(e.maps || {})))];
+  const splitOf = {}; ev.forEach(e => Object.values(e.maps || {}).forEach(m => { if (m.split) splitOf[m.label] = m.split; }));
+  let h = `<table><thead><tr><th>Checkpoint</th>${maps.map(m => `<th>${m}<span class="tag">${splitOf[m] || ""}</span></th>`).join("")}<th>Videos</th></tr></thead><tbody>`;
+  for (const e of ev.slice().reverse()) {
+    const vids = Object.entries(e.videos || {}).flatMap(([m, vs]) => vs.map(v => [m, v]));
+    const state = e.done ? `${fmt(e.wall_s, 0)}s wall` : e.stale ? "incomplete" : "in progress";
+    h += `<tr><td>${e.checkpoint}<br><span class="tag">${state}</span></td>`;
+    h += maps.map(m => { const c = (e.maps || {})[m];
+      return `<td class="num">${c && c.in_progress && e.stale ? `<span class="tag">stopped</span> ${c.rollouts} done` : evalCell(c)}</td>`; }).join("");
+    h += `<td><div class="vids">${vids.map(([m, v]) => {
+      const short = v.replace(e.checkpoint + "_", "").replace(".mp4", "");
+      return `<a href="#" data-src="/video/${encodeURIComponent(e.checkpoint)}/${encodeURIComponent(m)}/videos/${encodeURIComponent(v)}" data-cap="${v}">${short}</a>`; }).join("")}</div></td></tr>`;
+  }
+  $("evals").innerHTML = h + "</tbody></table>";
+  document.querySelectorAll(".vids a").forEach(a => a.onclick = (ev) => {
+    ev.preventDefault(); $("player").src = a.dataset.src; $("cap").textContent = a.dataset.cap; $("modal").style.display = "flex"; });
+}
+$("modal").onclick = (e) => { if (e.target.id === "modal") { $("player").pause(); $("modal").style.display = "none"; } };
+
+async function tick(fn) { try { await fn(); } catch (e) { console.warn(e); } }
+async function loop() {
+  await Promise.all([tick(refreshStatus), tick(refreshHw)]);
+  $("foot").textContent = `Updated ${new Date().toLocaleTimeString()} · hardware every 5 s, training every 30 s`;
+}
+loop(); tick(refreshMetrics); tick(refreshEvals);
+setInterval(loop, 5000);
+setInterval(() => { tick(refreshMetrics); tick(refreshEvals); }, 30000);
+</script>
+</body>
+</html>

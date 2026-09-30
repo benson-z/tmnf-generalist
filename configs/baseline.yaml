@@ -1,0 +1,43 @@
+# Baseline behaviour-cloning run. Every key is optional; defaults live in
+# src/tmnf_train/config.py. Override from the command line with
+#   --set section.key=value
+data:
+  corpus: Z:/application_storage/tmnf-ml/train_data/corpus2
+  work_dir: Z:/application_storage/tmnf-ml/work
+  downsample: 1          # 1 = 320x240, 2 = 160x120 ablation
+  crop_rows: null        # e.g. [40, 240] for a horizon crop (source rows)
+  window: 16
+  frame_stride: 1
+  context_offsets: []    # e.g. [20, 40, 60] for extra strided context frames
+  source: video          # video (NVDEC H.265) | memmap
+  progress_horizon_s: 4.0
+
+model:
+  channels: [32, 64, 64]
+  tokens_per_frame: 8
+  width: 512
+  layers: 8
+  heads: 8
+
+train:
+  run_name: baseline
+  seed: 0
+  epochs: 2
+  batch_size: 32
+  micro_batch: 8
+  lr: 3.0e-4
+  w_policy: 1.0
+  w_path: 0.5
+  w_progress: 0.5
+  eval_every_epochs: 1
+
+eval:
+  maps: [B01-Race]
+  rollouts: 4
+  temperature: 0.3
+  timeout_s: 60
+  stationary_s: 3.0
+  lanes: 1
+  offscreen: false
+  speed: 2.0
+  keep_last_n_videos: null   # keep every checkpoint's videos

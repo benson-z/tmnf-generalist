@@ -17,7 +17,17 @@ dependencies = [
 [project.optional-dependencies]
 # Only the training side needs torch: `uv sync --extra train` for NVIDIA (or
 # CPU), `uv sync --extra train-rocm` for the 890M (gfx1150) on ROCm 10.
-train = ["torch>=2.7"]
+train = [
+    "torch>=2.7",
+    # Eval on the integrated GPU: PyTorch has no Windows build for the 890M
+    # (gfx1150), so eval can run the exported model under DirectML instead.
+    "onnx>=1.17; sys_platform == 'win32'",
+    "onnxruntime-directml>=1.20; sys_platform == 'win32'",
+    # torch.compile's GPU kernels need Triton, which PyTorch does not ship for
+    # Windows. torch 2.11 pins triton==3.6.0 (its Linux wheel), so this is the
+    # matching community build; keep the two in step when torch moves.
+    "triton-windows==3.6.0.post26; sys_platform == 'win32'",
+]
 train-rocm = [
     "torch[device-gfx1150]>=2.13; sys_platform != 'darwin'",
     # torch's own dependencies, listed so the index pins below can apply.
@@ -33,7 +43,7 @@ train-rocm = [
 
 [project.scripts]
 tmnf-collect = "tmnf_collect.cli:main"
-tmnf-train = "tmnf_train.train:main"
+tmnf-train = "tmnf_train.cli:main"
 
 [build-system]
 requires = ["hatchling"]
