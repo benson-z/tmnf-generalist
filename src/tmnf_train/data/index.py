@@ -93,7 +93,8 @@ def labels_for_run(run_dir: Path, cfg: DataConfig) -> dict | None:
     # -- future path: waypoints in the car's own frame, and speed profile ----
     fwd, lat = heading(yaw)
     hs = [int(round(h * FPS)) for h in cfg.waypoint_horizons_s]
-    path = np.zeros((n, len(hs), 3), dtype=np.float32)  # (lateral m, forward m, speed km/h)
+    # (lateral m, forward m, speed km/h[, height change m])
+    path = np.zeros((n, len(hs), 4 if cfg.path_height else 3), dtype=np.float32)
     path_ok = np.zeros((n, len(hs)), dtype=bool)
     seg_break = np.zeros(n, dtype=np.int64)  # segment id, bumped at each respawn
     for k in jumps:
@@ -104,6 +105,8 @@ def labels_for_run(run_dir: Path, cfg: DataConfig) -> dict | None:
         path[idx, j, 0] = (d * lat[idx]).sum(1)
         path[idx, j, 1] = (d * fwd[idx]).sum(1)
         path[idx, j, 2] = speed[idx + h]
+        if cfg.path_height:
+            path[idx, j, 3] = pos[idx + h, 1] - pos[idx, 1]  # y is up
         path_ok[idx, j] = seg_break[idx + h] == seg_break[idx]
 
     # -- fixed-horizon progress: arc length along the run's own trajectory ---
@@ -188,7 +191,8 @@ def build(cfg: DataConfig, log=print, workers: int = 16) -> dict:
         "runs": [{"name": r["name"], "n": r["n"], "val": is_val(r["name"], cfg.val_fraction)} for r in kept],
         "dropped_respawn_runs": dropped,
         # Lateral is zero-mean by mirror symmetry; forward and speed are not.
-        "path_mean": [[0.0, m[1], m[2]] for m in ps.tolist()],
+        "path_mean": [[0.0, *m[1:]] for m in ps.tolist()],
+        "path_height": cfg.path_height,
         "path_std": np.sqrt(np.maximum(pq - ps**2, 1e-6)).tolist(),
         "progress_mean": pm,
         "progress_std": float(np.sqrt(pv)),

@@ -145,6 +145,8 @@ def metrics(out: dict, lab: Labels, norm: dict) -> dict[str, float]:
         r["path_lat_mae_m"] = err[..., 0][ok].mean().item()
         r["path_fwd_mae_m"] = err[..., 1][ok].mean().item()
         r["path_speed_mae_kmh"] = err[..., 2][ok].mean().item()
+        if err.shape[-1] > 3:
+            r["path_height_mae_m"] = err[..., 3][ok].mean().item()
     pok = lab.progress_ok
     if pok.any():
         r["progress_mae_m"] = ((out["progress"] - lab.progress).abs()[pok].mean() * norm["progress_std"]).item()
@@ -360,6 +362,9 @@ def run(cfg: Config, *, resume: bool = False, max_steps: int | None = None) -> N
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     log = RunLog(run_dir / "metrics.jsonl")
     manifest = load_manifest(cfg.data)
+    if manifest.get("path_height", False) != cfg.data.path_height:
+        raise ValueError(f"data.path_height is {cfg.data.path_height} but the index in {cfg.data.work_dir} was "
+                         f"built with {manifest.get('path_height', False)}; build one with `tmnf-train index`")
     norm = {k: manifest[k] for k in ("path_std", "progress_std")}
     train_runs, _ = split_runs(manifest, cfg.data)
 
@@ -509,7 +514,7 @@ def measure_vram(cfg: Config, steps: int = 10) -> dict:
         obs = Observation(frames=torch.randint(0, 255, (b, c + t + 1, h, w, 3), dtype=torch.uint8, device=dev),
                           speed=torch.rand(b, t, device=dev) * 300)
         lab = Labels(action=torch.randint(0, 12, (b, t), device=dev),
-                     action_soft=torch.softmax(torch.randn(b, t, 12, device=dev), -1), path=torch.randn(b, t, k, 3, device=dev),
+                     action_soft=torch.softmax(torch.randn(b, t, 12, device=dev), -1), path=torch.randn(b, t, k, 4 if cfg.data.path_height else 3, device=dev),
                      path_ok=torch.ones(b, t, k, dtype=torch.bool, device=dev), progress=torch.randn(b, t, device=dev),
                      progress_ok=torch.ones(b, t, dtype=torch.bool, device=dev),
                      chunk_soft=torch.softmax(torch.randn(b, t, n, 12, device=dev), -1),

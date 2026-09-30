@@ -507,3 +507,31 @@ def test_remote_policy_matches_the_local_one(tmp_path, monkeypatch):
         assert np.array_equal(pr, np.asarray(pl, np.float32))
         assert er.aux == el.aux
     er.close()
+
+
+def test_path_height_adds_a_fourth_channel(tmp_path):
+    import json
+
+    from tmnf_train.data.index import labels_for_run
+
+    run = tmp_path / "r"
+    run.mkdir()
+    n = 80
+    rows = [{"race_time": 50 * i, "speed_kmh": 100.0, "position": [0.0, 0.5 * i, 2.0 * i],
+             "velocity": [0.0, 0.0, 40.0], "yaw_pitch_roll": [0.0, 0.0, 0.0]} for i in range(n)]
+    ticks = [{"race_time": 10 * j, "up": True, "down": False, "left": False, "right": False} for j in range(5 * n)]
+    (run / "samples.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+    (run / "inputs.jsonl").write_text("\n".join(json.dumps(t) for t in ticks))
+    (run / "meta.json").write_text(json.dumps({"status": "ok", "replay_respawns": 0}))
+    flat = labels_for_run(run, DataConfig())
+    tall = labels_for_run(run, replace(DataConfig(), path_height=True))
+    assert flat["path"].shape[-1] == 3 and tall["path"].shape[-1] == 4
+    assert np.allclose(flat["path"], tall["path"][..., :3])
+    # 0.5 m up per frame: 0.5 s ahead (10 frames) is 5 m higher.
+    assert np.isclose(tall["path"][0, 0, 3], 5.0)
+    cfg = small_cfg(path_height=True)
+    model = Model(cfg, n_horizons=2).eval()
+    h, w = cfg.input_hw
+    obs = Observation(torch.randint(0, 255, (1, 5, h, w, 3), dtype=torch.uint8), torch.rand(1, 4) * 100)
+    with torch.no_grad():
+        assert model(obs)["path_mean"].shape == (1, 4, 2, 4)

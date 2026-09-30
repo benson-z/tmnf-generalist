@@ -187,7 +187,8 @@ class Model(nn.Module):
         if self.policy_head not in ("joint", "chain"):
             raise ValueError(f"model.policy_head must be joint or chain, not {self.policy_head!r}")
         self.policy = nn.Linear(m.width, N_ACTIONS)  # chain: 3 + 3 + 6 raw outputs
-        self.path = nn.Linear(m.width, n_horizons * 3 * 2)  # mean + log-variance
+        self.path_c = 4 if cfg.data.path_height else 3  # lateral, forward, speed[, height]
+        self.path = nn.Linear(m.width, n_horizons * self.path_c * 2)  # mean + log-variance
         self.progress = nn.Linear(m.width, 1)
         self.n_chunk = cfg.data.action_chunk
         self.chunk = nn.Linear(m.width, self.n_chunk * N_ACTIONS) if self.n_chunk else None
@@ -217,7 +218,7 @@ class Model(nn.Module):
     def heads(self, h: torch.Tensor) -> dict[str, torch.Tensor]:
         pooled = self.norm(h.mean(2))  # (B, T, width)
         path_in = pooled.detach() if self.path_detach else pooled
-        path = self.path(path_in).view(*pooled.shape[:2], self.n_h, 3, 2)
+        path = self.path(path_in).view(*pooled.shape[:2], self.n_h, self.path_c, 2)
         raw = self.policy(pooled)
         out = {}
         if self.policy_head == "chain":

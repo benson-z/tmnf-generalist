@@ -86,6 +86,10 @@ class DataConfig:
     # Future path aux: waypoints at these horizons (s), in the car's frame.
     waypoint_horizons_s: list[float] = field(default_factory=lambda: [0.5, 1.0, 1.5, 2.0, 2.5, 3.0])
     progress_horizon_s: float = 4.0
+    # Add each waypoint's height change (m, world up) as a 4th path channel,
+    # after lateral, forward and speed. Needs an index built with it (use a
+    # separate work_dir: the manifest's path statistics change shape).
+    path_height: bool = False
     windows_per_epoch: int | None = None  # null = one pass over all windows at stride `window`
     loader_workers: int = 6
     prefetch_batches: int = 4

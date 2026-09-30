@@ -48,7 +48,7 @@ class Labels(NamedTuple):
 
     action: torch.Tensor  # (B, T) int64, -1 where unlabelled
     action_soft: torch.Tensor  # (B, T, 12) float32: share of the step's 5 ticks per action (0 where unlabelled)
-    path: torch.Tensor  # (B, T, K, 3) float32 normalised (lateral, forward, speed)
+    path: torch.Tensor  # (B, T, K, 3|4) float32 normalised (lateral, forward, speed[, height])
     path_ok: torch.Tensor  # (B, T, K) bool
     progress: torch.Tensor  # (B, T) float32 normalised
     progress_ok: torch.Tensor  # (B, T) bool
