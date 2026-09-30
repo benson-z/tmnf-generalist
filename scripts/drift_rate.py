@@ -47,6 +47,10 @@ def tap_timing(a: np.ndarray, spd: np.ndarray) -> tuple[list[int], list[int]]:
     return lens, lags
 
 
+def fast_mask(spd: np.ndarray) -> np.ndarray:
+    return spd > 100
+
+
 def summary(lens: list[int], lags: list[int]) -> str:
     if not lens:
         return "no taps"
@@ -57,6 +61,7 @@ def summary(lens: list[int], lags: list[int]) -> str:
 for ev in args.evals:
     taps = steps_fast = brake_fast = slide = n150 = 0
     all_lens, all_lags = [], []
+    flag = flag_n = 0  # the game's sliding flag, where the step logs have it
     minutes = 0.0
     files = sorted(Path(ev).glob(f"{args.map or '*'}/steps/*.jsonl"))
     for f in files:
@@ -69,6 +74,10 @@ for ev in args.evals:
         yaw = np.array([r["yaw"] for r in rows], float)
         br = (a // 3) % 2 == 1
         st = a % 3 != 1
+        if "sliding" in rows[0]:
+            fl = np.array([bool(r["sliding"]) for r in rows])
+            flag += int((fl & fast_mask(spd)).sum())
+            flag_n += int(fast_mask(spd).sum())
         ln, lg = tap_timing(a, spd)
         all_lens += ln
         all_lags += lg
@@ -88,6 +97,8 @@ for ev in args.evals:
           f"drift taps/min {taps / max(minutes, 1e-9):.2f}; brake share >100 km/h {brake_fast / max(steps_fast, 1):.3f}; "
           f"sliding share >150 km/h {slide / max(n150, 1):.3f}")
     print("   ", summary(all_lens, all_lags))
+    if flag_n:
+        print(f"    game sliding flag, share of steps >100 km/h: {flag / flag_n:.3f} (demos 0.222)")
 
 if args.demos:
     import os
