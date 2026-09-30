@@ -32,7 +32,9 @@ import datetime as dt
 import fcntl
 import json
 import os
+import re
 import shlex
+import traceback
 import subprocess
 import sys
 import time
@@ -232,6 +234,20 @@ class EvalLane:
         self.job = job
         self.started = time.time()
 
+    def adopt_running(self, queue: dict) -> bool:
+        """Track an eval started by an earlier session of this queue (its ssh is still up)."""
+        out = subprocess.run(["pgrep", "-af", "overnight_jobs/"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            m = re.search(r"overnight_jobs/(\S+)\.sh", line)
+            job = next((j for j in queue["eval"] if m and j["id"] == m.group(1)), None)
+            if job is not None and line.split(" ", 1)[1].startswith("ssh"):
+                log(f"eval {job['id']}: adopting running eval (ssh pid {line.split()[0]})")
+                self.proc = _Adopted(int(line.split()[0]))
+                self.job = job
+                self.started = time.time()
+                return True
+        return False
+
     def finish(self) -> bool:
         """Record the finished job. True if it produced a summary."""
         job = self.job
@@ -268,7 +284,11 @@ def expand_auto_evals(queue: dict, done: dict) -> None:
     """Enqueue evals of training checkpoints that have appeared."""
     known = {j["id"] for j in queue["eval"]}
     for tj in queue["train"]:
-        run = TrainLane.run_name(tj)
+        try:
+            run = TrainLane.run_name(tj)
+        except Exception as exc:
+            log(f"train {tj['id']}: cannot read its config ({exc!r}); skipping its auto evals")
+            continue
         ck_dir = RUNS / run / "checkpoints"
         if not ck_dir.is_dir():
             continue
@@ -310,58 +330,72 @@ def main() -> None:
         f"stop at {stop_at:%H:%M}")
 
     train, ev = TrainLane(), EvalLane(args.policy_url)
+    first = True
     while True:
-        queue = read_json(QDIR / "queue.json", {"train": [], "eval": []})
-        queue.setdefault("train", [])
-        queue.setdefault("eval", [])
-        done = read_json(QDIR / "done.json", {})
-
-        if now() >= stop_at:
-            train.stop()
-            ev.stop()
-            log("stop time reached; queue stopped")
-            return
-
-        # train lane
-        if train.job is not None and not train.busy():
-            rc = train.proc.returncode
-            done[train.job["id"]] = {"kind": "train", "rc": rc, "at": f"{now():%H:%M}"}
-            log(f"train {train.job['id']}: exited rc {rc}")
-            train.job = None
-        if train.job is None and now() < no_train:
-            nxt = next((j for j in queue["train"] if j["id"] not in done and not j.get("hold")), None)
-            if nxt is not None:
-                stray = train.stray_trainer()
-                if stray and f"--config {nxt['config']}" in stray[0][1]:
-                    train.adopt(stray[0][0], nxt)
-                elif stray:
-                    log("a trainer is already running outside the queue; waiting")
-                else:
-                    train.start(nxt)
-
-        # eval lane
-        expand_auto_evals(queue, done)
-        write_json(QDIR / "queue.json", queue)
-        if ev.job is not None and not ev.busy():
-            ok = ev.finish()
-            done[ev.job["id"]] = {"kind": "eval", "ok": ok, "at": f"{now():%H:%M}"}
-            ev.job = None
-        if ev.job is None and now() < no_new:
-            for j in queue["eval"]:
-                if j["id"] in done or j.get("hold"):
-                    continue
-                if ev.summary_path(j).exists():  # done in an earlier session
-                    done[j["id"]] = {"kind": "eval", "ok": True, "at": "earlier"}
-                    continue
-                if (RUNS / j["run"] / "checkpoints" / f"{j['checkpoint']}.pt").exists():
-                    ev.start(j)
-                    break
-        write_json(QDIR / "done.json", done)
-
-        if (train.job is None and ev.job is None and now() >= no_new):
-            log("nothing running and nothing may start; queue finished")
-            return
+        try:
+            if step(args, train, ev, stop_at, no_new, no_train, first):
+                return
+        except Exception:  # a bad queue entry or a flaky NAS must not end the night
+            log("error in the queue loop:\n" + traceback.format_exc())
+        first = False
         time.sleep(args.poll)
+
+
+def step(args, train: TrainLane, ev: EvalLane, stop_at, no_new, no_train, first: bool) -> bool:
+    """One pass over both lanes. True when the queue is finished."""
+    queue = read_json(QDIR / "queue.json", {"train": [], "eval": []})
+    queue.setdefault("train", [])
+    queue.setdefault("eval", [])
+    done = read_json(QDIR / "done.json", {})
+
+    if now() >= stop_at:
+        train.stop()
+        ev.stop()
+        log("stop time reached; queue stopped")
+        return True
+    if first and ev.job is None:
+        ev.adopt_running(queue)
+
+    # train lane
+    if train.job is not None and not train.busy():
+        rc = train.proc.returncode
+        done[train.job["id"]] = {"kind": "train", "rc": rc, "at": f"{now():%H:%M}"}
+        log(f"train {train.job['id']}: exited rc {rc}")
+        train.job = None
+    if train.job is None and now() < no_train:
+        nxt = next((j for j in queue["train"] if j["id"] not in done and not j.get("hold")), None)
+        if nxt is not None:
+            stray = train.stray_trainer()
+            if stray and f"--config {nxt['config']}" in stray[0][1]:
+                train.adopt(stray[0][0], nxt)
+            elif stray:
+                log("a trainer is already running outside the queue; waiting")
+            else:
+                train.start(nxt)
+
+    # eval lane
+    expand_auto_evals(queue, done)
+    write_json(QDIR / "queue.json", queue)
+    if ev.job is not None and not ev.busy():
+        ok = ev.finish()
+        done[ev.job["id"]] = {"kind": "eval", "ok": ok, "at": f"{now():%H:%M}"}
+        ev.job = None
+    if ev.job is None and now() < no_new:
+        for j in queue["eval"]:
+            if j["id"] in done or j.get("hold"):
+                continue
+            if ev.summary_path(j).exists():  # done in an earlier session
+                done[j["id"]] = {"kind": "eval", "ok": True, "at": "earlier"}
+                continue
+            if (RUNS / j["run"] / "checkpoints" / f"{j['checkpoint']}.pt").exists():
+                ev.start(j)
+                break
+    write_json(QDIR / "done.json", done)
+
+    if (train.job is None and ev.job is None and now() >= no_new):
+        log("nothing running and nothing may start; queue finished")
+        return True
+    return False
 
 
 if __name__ == "__main__":
