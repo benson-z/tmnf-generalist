@@ -16,6 +16,11 @@ jobs can be appended while it runs:
    "eval":  [{"id": "E0", "run": "v2_soft", "checkpoint": "v2_soft_e04_s0015478_end",
               "eval_id": "...", "config": "configs/v2.yaml", "set": [...]}]}
 
+A train job with ``"local": true`` trains into ``--local-runs`` on this
+machine's disk instead of the NAS (gvfs drops under a long-lived writer), and
+the queue rsyncs that run dir to the NAS every pass, so evals on ser5 see its
+checkpoints (``*.tmp`` files are skipped, so they never see a partial one).
+
 An eval job waits until its checkpoint exists. ``auto_evals`` enqueue evals
 of a training run's epoch-end checkpoints (and their ``_ema`` twins) as they
 appear. Finished jobs are recorded in ``done.json``; each eval's summary is
@@ -51,6 +56,37 @@ RUNS = STORAGE / "runs"
 SER5 = "ser5.lan"
 CONTAINER_STORAGE = "/tmnf-ml"
 PY = str(REPO / ".venv" / "bin" / "python")
+LOCAL_RUNS: Path | None = None  # --local-runs
+
+
+def run_root(run: str) -> Path:
+    """Where ``run`` is written: the local runs dir if it trains there, else the NAS."""
+    if LOCAL_RUNS is not None and (LOCAL_RUNS / run).is_dir():
+        return LOCAL_RUNS
+    return RUNS
+
+
+def sync_local(queue: dict) -> None:
+    """Copy local run dirs to the NAS (checkpoints, logs, metrics)."""
+    if LOCAL_RUNS is None:
+        return
+    for tj in queue["train"]:
+        if not tj.get("local"):
+            continue
+        run = TrainLane.run_name(tj)
+        if not (LOCAL_RUNS / run).is_dir():
+            continue
+        srcs = [str(LOCAL_RUNS / run)] + [str(f) for f in [LOCAL_RUNS / f"{run}_stdout.log"] if f.exists()]
+        cmd = ["rsync", "-rt", "--exclude", "*.tmp", "--exclude", "*.lock", *srcs, str(RUNS) + "/"]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+            # gvfs refuses every chmod (rc 23, "failed to set permissions"); the data still lands.
+            errs = [ln for ln in r.stderr.splitlines()
+                    if "failed to set permissions" not in ln and "some files/attrs were not transferred" not in ln]
+            if r.returncode not in (0, 23) or errs:
+                log(f"sync {run} to the NAS: rc {r.returncode}: {' | '.join(errs)[-300:]}")
+        except subprocess.TimeoutExpired:
+            log(f"sync {run} to the NAS: timed out")
 
 
 def now() -> dt.datetime:
@@ -91,7 +127,7 @@ def append_metrics(run: str, row: dict) -> None:
     from tmnf_train.train import RunLog
 
     try:
-        RunLog(RUNS / run / "metrics.jsonl").write(row)
+        RunLog(run_root(run) / run / "metrics.jsonl").write(row)
     except OSError as exc:
         log(f"could not append to {run}/metrics.jsonl: {exc!r}")
 
@@ -112,7 +148,7 @@ class TrainLane:
 
         run = self.run_name(self.job)
         epochs = load(REPO / self.job["config"], self.job.get("set", [])).train.epochs
-        return any((RUNS / run / "checkpoints").glob(f"{run}_e{epochs:02d}_s*_end.pt"))
+        return any((run_root(run) / run / "checkpoints").glob(f"{run}_e{epochs:02d}_s*_end.pt"))
 
     def check_stall(self, stall_s: float) -> None:
         """Kill a trainer whose metrics log has gone quiet (e.g. a loader
@@ -121,7 +157,8 @@ class TrainLane:
         if not self.busy() or time.time() - self.started < stall_s:
             return
         try:
-            quiet = time.time() - (RUNS / self.run_name(self.job) / "metrics.jsonl").stat().st_mtime
+            run = self.run_name(self.job)
+            quiet = time.time() - (run_root(run) / run / "metrics.jsonl").stat().st_mtime
         except OSError:
             return
         if quiet < stall_s:
@@ -154,13 +191,22 @@ class TrainLane:
 
     def start(self, job: dict) -> None:
         run = self.run_name(job)
-        resume = (RUNS / run / "checkpoints").is_dir() and any((RUNS / run / "checkpoints").glob("*.pt"))
+        root = RUNS
+        if job.get("local"):
+            if LOCAL_RUNS is None:
+                raise RuntimeError(f"train {job['id']} is local but no --local-runs was given")
+            root = LOCAL_RUNS
+            (root / run).mkdir(parents=True, exist_ok=True)
+        ck_dir = root / run / "checkpoints"
+        resume = ck_dir.is_dir() and any(ck_dir.glob("*.pt"))
         cmd = [PY, "-u", "-m", "tmnf_train", "train", "--config", job["config"]]
         for s in job.get("set", []):
             cmd += ["--set", s]
+        if job.get("local"):
+            cmd += ["--set", f"train.run_dir={root}"]
         if resume:
             cmd.append("--resume")
-        out = (RUNS / f"{run}_stdout.log").open("a")
+        out = (root / f"{run}_stdout.log").open("a")
         log(f"train {job['id']}: start {run}{' (resume)' if resume else ''}: {shlex.join(cmd[3:])}")
         self.proc = subprocess.Popen(cmd, cwd=REPO, stdout=out, stderr=subprocess.STDOUT)
         self.job = job
@@ -353,7 +399,11 @@ def main() -> None:
     ap.add_argument("--stop-at", default="08:15", help="stop everything (HH:MM)")
     ap.add_argument("--poll", type=float, default=20.0)
     ap.add_argument("--stall-s", type=float, default=600.0, help="restart a trainer silent this long")
+    ap.add_argument("--local-runs", default=None, help='run dir for train jobs marked "local": true')
     args = ap.parse_args()
+    global LOCAL_RUNS
+    if args.local_runs:
+        LOCAL_RUNS = Path(os.path.expanduser(args.local_runs))
 
     QDIR.mkdir(parents=True, exist_ok=True)
     lock = (QDIR / "overnight.lock").open("w")
@@ -420,6 +470,7 @@ def step(args, train: TrainLane, ev: EvalLane, stop_at, no_new, no_train, first:
                 train.start(nxt)
 
     # eval lane
+    sync_local(queue)
     expand_auto_evals(queue, done)
     write_json(QDIR / "queue.json", queue)
     if ev.job is not None and not ev.busy():
