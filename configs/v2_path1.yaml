@@ -1,6 +1,5 @@
-# v2 plus an action-chunking aux head: each frame also predicts the soft
-# actions of the next 8 steps (400 ms), weight 0.5. Everything else as v2
-# (full data, w_path 0.5), with torch.compile for speed (same math).
+# v2 with the path head at weight 1.0 and the progress head off (it was
+# inert: 4-6% of the policy's gradient). EMA weights kept alongside.
 data:
   corpus: Z:/application_storage/tmnf-ml/train_data/corpus2
   work_dir: Z:/application_storage/tmnf-ml/work
@@ -9,7 +8,6 @@ data:
   frame_stride: 1
   source: video
   progress_horizon_s: 4.0
-  action_chunk: 8
 
 model:
   channels: [32, 64, 64]
@@ -19,7 +17,7 @@ model:
   heads: 8
 
 train:
-  run_name: v2_chunk
+  run_name: v2_path1
   compile: true
   ema_decay: 0.999
   seed: 0
@@ -29,9 +27,8 @@ train:
   lr: 3.0e-4
   label_mode: soft
   w_policy: 1.0
-  w_path: 0.5
-  w_progress: 0.5
-  w_chunk: 0.5
+  w_path: 1.0
+  w_progress: 0.0
   eval_every_epochs: 1
   eval_mode: external       # evaluate with `tmnf-train eval-watch` alongside training
 
