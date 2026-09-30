@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,40 @@ from typing import Any
 import yaml
 
 STORAGE = Path("Z:/application_storage/tmnf-ml")
+# Paths in configs and checkpoints are written against the Windows NAS drive.
+# With TMNF_STORAGE set (e.g. ~/tmnf-ml on Linux, /tmnf-ml in the ser5
+# container), that prefix is swapped for it when a config is loaded, so the
+# same config files work on every machine.
+_STORAGE_PREFIX = "Z:/application_storage/tmnf-ml"
+
+
+def storage_path(p: str) -> str:
+    """``p`` with the Windows storage prefix swapped for $TMNF_STORAGE, if set."""
+    root = os.environ.get("TMNF_STORAGE")
+    if not root:
+        return p
+    q = p.replace("\\", "/")
+    if q.lower().startswith(_STORAGE_PREFIX.lower()):
+        return str(Path(os.path.expanduser(root)) / q[len(_STORAGE_PREFIX):].lstrip("/"))
+    return p
+
+
+def canonical_path(p: str) -> str:
+    """The inverse of :func:`storage_path`: a local storage path in its
+    machine-independent ``Z:/application_storage/tmnf-ml/...`` form, so it can
+    be handed to another machine (e.g. the policy server)."""
+    root = os.environ.get("TMNF_STORAGE")
+    if root:
+        base = Path(os.path.expanduser(root)).resolve()
+        try:
+            rel = Path(p).resolve().relative_to(base)
+        except ValueError:
+            try:  # a symlinked subtree (e.g. runs/ -> NAS) resolves elsewhere
+                rel = Path(os.path.abspath(p)).relative_to(Path(os.path.abspath(os.path.expanduser(root))))
+            except ValueError:
+                return p
+        return f"{_STORAGE_PREFIX}/{rel.as_posix()}"
+    return p.replace("\\", "/")
 
 
 @dataclass
@@ -68,6 +103,12 @@ class ModelConfig:
     dropout: float = 0.0
     speed_scale_kmh: float = 300.0
     groupnorm: bool = True
+    # joint: one 12-way softmax over gas x brake x steer.
+    # chain: P(steer) * P(brake | steer) * P(gas | steer, brake), all
+    # conditionals from one linear layer (3 + 3 + 6 = 12 outputs). The joint
+    # distribution is the same family; brake gets its own loss weight
+    # (train.w_brake). The head still returns 12-way log-probabilities.
+    policy_head: str = "joint"
 
 
 @dataclass
@@ -93,6 +134,12 @@ class TrainConfig:
     w_path: float = 0.5
     w_progress: float = 0.5
     w_chunk: float = 0.5  # used only when data.action_chunk > 0
+    # model.policy_head chain only: weight of the P(brake | steer) term within
+    # the policy loss. 1.0 makes the policy loss exactly the joint CE.
+    w_brake: float = 1.0
+    # Exponential moving average of the weights, updated every optimizer step.
+    # Every checkpoint gets an ``<name>_ema.pt`` twin holding it. 0 disables.
+    ema_decay: float = 0.0
     log_every: int = 50
     val_every_steps: int = 2000
     val_windows: int = 512
@@ -128,6 +175,14 @@ class EvalConfig:
     off_line_m: float = 10.0  # corpus maps: "left the line" threshold
     rollouts: int = 4
     temperature: float = 0.3  # 0 = greedy (then one rollout is enough)
+    # Per-control temperatures, e.g. {steer: 0.5, brake: 1.0, gas: 0.3}. When
+    # set, the action is sampled in stages from the 12-way distribution: steer
+    # from its marginal, then brake given steer, then gas given both, each
+    # with its own temperature. ``temperature`` is then unused.
+    temperature_controls: dict[str, float] | None = None
+    # Which head picks the action: policy, or chunkK = the action-chunk head's
+    # prediction for step t+K (a model trained with data.action_chunk >= K).
+    action_source: str = "policy"
     seed: int = 1234
     timeout_s: float = 60.0  # race time; B01 bronze is 39.68 s
     # Per map the race timeout is max(timeout_s, this x the map's author time),
@@ -165,6 +220,9 @@ class EvalConfig:
     # DXGI adapter index for directml. On the dev laptop 0 is the RTX 5070 Ti
     # and 1 the Radeon iGPU (checked: 1 never shows up in nvidia-smi).
     dml_device_id: int = 1
+    # device remote: the policy runs in `tmnf-train serve-policy` on another
+    # machine (host:port); frames go over TCP, actions come back.
+    policy_url: str = "127.0.0.1:9555"
     random_gas_prob: float = 0.8  # random-policy smoke test only
     random_brake_prob: float = 0.1
 
@@ -210,7 +268,17 @@ def load(path: str | Path | None = None, overrides: list[str] | None = None) -> 
     if unknown:
         raise ValueError(f"unknown config section(s): {sorted(unknown)}")
     cfg = Config(**{k: _fill(c, raw.get(k, {}), k) for k, c in sections.items()})
+    localize(cfg)
     cfg.input_hw  # validate
+    return cfg
+
+
+def localize(cfg: Config) -> Config:
+    """Rewrite the storage paths of ``cfg`` in place for this machine."""
+    for section, name in (("data", "corpus"), ("data", "work_dir"), ("train", "run_dir"),
+                          ("eval", "corpus"), ("eval", "out_dir")):
+        obj = getattr(cfg, section)
+        setattr(obj, name, storage_path(getattr(obj, name)))
     return cfg
 
 

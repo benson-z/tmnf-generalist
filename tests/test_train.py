@@ -301,3 +301,209 @@ def test_model_episode_runs_every_inference_path(inference, context):
             b, _ = ep2.act(frame, 120.0)
             assert 0 <= a < actions.N_ACTIONS and abs(p.sum() - 1) < 1e-5
             assert a == b  # same seed, same inputs, same actions
+
+
+# ------------------------------------------------------- storage paths
+
+def test_storage_paths_follow_tmnf_storage(tmp_path, monkeypatch):
+    from tmnf_train.config import canonical_path, storage_path
+
+    monkeypatch.delenv("TMNF_STORAGE", raising=False)
+    assert storage_path("Z:/application_storage/tmnf-ml/runs/x") == "Z:/application_storage/tmnf-ml/runs/x"
+    assert load(None).data.corpus.startswith("Z:")
+    monkeypatch.setenv("TMNF_STORAGE", str(tmp_path))
+    cfg = load(None)
+    assert cfg.data.corpus == str(tmp_path / "train_data" / "corpus2")
+    assert cfg.train.run_dir == str(tmp_path / "runs")
+    assert storage_path("Z:\\application_storage\\tmnf-ml\\runs\\a.pt") == str(tmp_path / "runs" / "a.pt")
+    assert storage_path("/elsewhere/a.pt") == "/elsewhere/a.pt"
+    # canonical_path is the inverse, so a path can cross to another machine.
+    local = str(tmp_path / "runs" / "v2" / "checkpoints" / "a.pt")
+    assert canonical_path(local) == "Z:/application_storage/tmnf-ml/runs/v2/checkpoints/a.pt"
+    assert storage_path(canonical_path(local)) == local
+
+
+# ----------------------------------------------------- chain policy head
+
+def _chain_model():
+    cfg = small_cfg()
+    cfg.model = replace(cfg.model, policy_head="chain")
+    torch.manual_seed(0)
+    return cfg, Model(cfg, n_horizons=2).eval()
+
+
+def test_chain_head_is_a_normalised_12_way_distribution():
+    from tmnf_train.model import chain_logp
+
+    cfg, model = _chain_model()
+    h, w = cfg.input_hw
+    obs = Observation(torch.randint(0, 255, (2, 5, h, w, 3), dtype=torch.uint8), torch.rand(2, 4) * 100)
+    with torch.no_grad():
+        out = model(obs)
+    assert out["logits"].shape == (2, 4, 12)
+    assert torch.allclose(out["logits"].exp().sum(-1), torch.ones(2, 4), atol=1e-5)
+    # The layout is gas * 6 + brake * 3 + steer: check one entry by hand.
+    raw = torch.randn(12)
+    joint, brake = chain_logp(raw)
+    g, b, s = 1, 1, 2
+    want = (torch.log_softmax(raw[:3], -1)[s] + torch.nn.functional.logsigmoid(raw[3 + s])
+            + torch.nn.functional.logsigmoid(raw[6 + 2 * s + b]))
+    assert torch.allclose(joint[actions.encode(g, b, s)], want, atol=1e-6)
+    assert torch.allclose(brake.exp().sum(0), torch.ones(3), atol=1e-6)
+
+
+@pytest.mark.parametrize("label_mode", ["hard", "soft"])
+def test_chain_brake_weight_one_is_the_joint_ce(label_mode):
+    from tmnf_train.train import brake_ce, losses
+
+    cfg, model = _chain_model()
+    h, w = cfg.input_hw
+    b, t = 2, 4
+    obs = Observation(torch.randint(0, 255, (b, 5, h, w, 3), dtype=torch.uint8), torch.rand(b, t) * 100)
+    act = torch.randint(0, 12, (b, t))
+    act[0, 0] = -1
+    soft = torch.softmax(torch.randn(b, t, 12), -1) * (act >= 0).unsqueeze(-1)
+    lab = Labels(action=act, action_soft=soft, path=torch.zeros(b, t, 2, 3), path_ok=torch.ones(b, t, 2, dtype=torch.bool),
+                 progress=torch.zeros(b, t), progress_ok=torch.ones(b, t, dtype=torch.bool),
+                 chunk_soft=torch.zeros(b, t, 0, 12), chunk_ok=torch.zeros(b, t, 0, dtype=torch.bool))
+    with torch.no_grad():
+        out = model(obs)
+    one = losses(out, lab, label_mode, w_brake=1.0)["policy"]
+    three = losses(out, lab, label_mode, w_brake=3.0)["policy"]
+    assert torch.allclose(three - one, 2.0 * brake_ce(out["brake_logp"], lab, label_mode), atol=1e-5)
+    # The joint CE splits exactly into steer + brake|steer + gas|steer,brake.
+    q = (soft if label_mode == "soft" else torch.nn.functional.one_hot(act.clamp(min=0), 12).float())
+    m = (act >= 0).float()
+    lp = out["logits"].unflatten(-1, (2, 2, 3))  # [g, b, s]
+    p = lp.exp()
+    q3 = q.unflatten(-1, (2, 2, 3))
+    steer = -(q3.sum((-3, -2)) * p.sum((-3, -2)).log()).sum(-1)
+    gas = -(q3 * (lp - p.sum(-3, keepdim=True).log())).sum((-1, -2, -3))
+    parts = (steer * m).sum() / m.sum() + brake_ce(out["brake_logp"], lab, label_mode) + (gas * m).sum() / m.sum()
+    assert torch.allclose(one, parts, atol=1e-5)
+
+
+# ------------------------------------------------------------ sampling
+
+def test_staged_sampling_at_unit_temperatures_is_the_joint():
+    from tmnf_train.policy_model import sample_action
+
+    logits = torch.randn(12)
+    gen = torch.Generator().manual_seed(0)
+    _, joint = sample_action(logits, 1.0, gen, {"steer": 1.0, "brake": 1.0, "gas": 1.0})
+    assert np.allclose(joint, torch.softmax(logits, -1).numpy(), atol=1e-6)
+    # A hot brake raises P(brake | steer) above what the joint gives it.
+    logits = torch.zeros(12)
+    logits[[3, 4, 5, 9, 10, 11]] = -3.0  # braking actions unlikely
+    _, hot = sample_action(logits, 1.0, gen, {"steer": 1.0, "brake": 2.0, "gas": 1.0})
+    brake_p = lambda p: p.reshape(2, 2, 3)[:, 1].sum()
+    assert brake_p(hot) > brake_p(torch.softmax(logits, -1).numpy())
+    # Temperature 0 for every control is the argmax of each stage.
+    a, p = sample_action(torch.arange(12.0), 1.0, gen, {"steer": 0, "brake": 0, "gas": 0})
+    assert a == 11 and p[11] == 1.0
+    counts = np.bincount([sample_action(logits, 1.0, gen, {"steer": 0.5, "brake": 1.0, "gas": 0.3})[0]
+                          for _ in range(200)], minlength=12)
+    assert counts.sum() == 200
+
+
+def test_action_source_needs_a_long_enough_chunk_head():
+    from tmnf_train.policy_model import ModelPolicy
+
+    cfg = small_cfg(action_chunk=2)
+    model = Model(cfg, n_horizons=2).eval()
+    policy = ModelPolicy(model, cfg, "t", torch.device("cpu"))
+    policy.set_sampling(None, "chunk2")
+    with pytest.raises(ValueError):
+        policy.set_sampling(None, "chunk3")
+    with pytest.raises(ValueError):
+        ModelPolicy(Model(small_cfg(), 2), small_cfg(), "t", torch.device("cpu")).set_sampling(None, "chunk1")
+    ep = policy.episode(seed=0, temperature=0.5)
+    a, p = ep.act(np.zeros((240, 320, 3), np.uint8), 50.0)
+    assert 0 <= a < 12 and abs(p.sum() - 1) < 1e-5
+
+
+# ------------------------------------------------ EMA and checkpoints
+
+def _manifest():
+    return {"waypoint_horizons_s": [0.5, 1.0], "path_mean": [0, 0, 0], "path_std": [1, 1, 1],
+            "progress_mean": 0.0, "progress_std": 1.0}
+
+
+def test_ema_twin_checkpoint_loads_as_a_policy(tmp_path):
+    from tmnf_train.policy_model import ModelPolicy
+    from tmnf_train.train import Ema, latest_ckpt, save_ckpt
+
+    cfg = small_cfg()
+    torch.manual_seed(0)
+    model = Model(cfg, n_horizons=2)
+    opt = torch.optim.AdamW(model.parameters())
+    ema = Ema(model, 0.0)  # decay 0: the average is the latest weights
+    with torch.no_grad():
+        for p in model.parameters():
+            p.add_(1.0)
+    ema.update(model)
+    for k, v in model.state_dict().items():
+        if v.is_floating_point():
+            assert torch.equal(ema.shadow[k], v.float())
+    ema9 = Ema(model, 0.9)
+    before = {k: v.clone() for k, v in ema9.shadow.items()}
+    with torch.no_grad():
+        for p in model.parameters():
+            p.add_(1.0)
+    ema9.update(model)
+    k = next(iter(before))
+    assert torch.allclose(ema9.shadow[k], before[k] + 0.1, atol=1e-5)
+    save_ckpt(tmp_path / "r_e01_s0000010_end.pt", model, opt, cfg, _manifest(), {"step": 10}, ema9)
+    twin = tmp_path / "r_e01_s0000010_end_ema.pt"
+    assert twin.exists()
+    assert latest_ckpt(tmp_path).name == "r_e01_s0000010_end.pt"  # resume never picks the twin
+    policy = ModelPolicy.from_checkpoint(str(twin), device="cpu")
+    assert torch.allclose(policy.model.state_dict()[k], ema9.shadow[k])
+    assert "ema" in torch.load(tmp_path / "r_e01_s0000010_end.pt", weights_only=False)
+
+
+# ------------------------------------------------------ remote policy
+
+def test_remote_policy_matches_the_local_one(tmp_path, monkeypatch):
+    import socket
+    import threading
+
+    from tmnf_train.config import EvalConfig
+    from tmnf_train.policy_model import ModelPolicy
+    from tmnf_train.policy_server import RemotePolicy, serve
+    from tmnf_train.train import save_ckpt
+
+    monkeypatch.setenv("TMNF_STORAGE", str(tmp_path))
+    cfg = small_cfg(action_chunk=2)
+    torch.manual_seed(0)
+    model = Model(cfg, n_horizons=2)
+    ck = tmp_path / "runs" / "r" / "checkpoints" / "r_e01_s0000010_end.pt"
+    ck.parent.mkdir(parents=True)
+    save_ckpt(ck, model, torch.optim.AdamW(model.parameters()), cfg, _manifest(), {"step": 10})
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    threading.Thread(target=serve, args=("127.0.0.1", port, "cpu", lambda *a: None), daemon=True).start()
+    ecfg = replace(EvalConfig(), device="remote", policy_url=f"127.0.0.1:{port}",
+                   temperature_controls={"steer": 0.5, "brake": 1.0, "gas": 0.3}, action_source="chunk1")
+    for _ in range(100):
+        try:
+            remote = RemotePolicy(str(ck), ecfg)
+            break
+        except ConnectionRefusedError:
+            import time
+            time.sleep(0.05)
+    local = ModelPolicy.from_checkpoint(str(ck), device="cpu")
+    local.set_sampling(ecfg.temperature_controls, ecfg.action_source)
+    assert remote.id == local.id and remote.device.startswith("remote:")
+    rng = np.random.default_rng(0)
+    er, el = remote.episode(7, 0.5), local.episode(7, 0.5)
+    for _ in range(10):
+        frame = rng.integers(0, 256, (240, 320, 3), dtype=np.uint8)
+        ar, pr = er.act(frame, 90.0)
+        al, pl = el.act(frame, 90.0)
+        assert ar == al
+        assert np.array_equal(pr, np.asarray(pl, np.float32))
+        assert er.aux == el.aux
+    er.close()

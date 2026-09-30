@@ -44,13 +44,65 @@ def path_aux(mean: np.ndarray, logvar: np.ndarray, norm: dict | None, horizons: 
     }
 
 
+def sample_action(logits: torch.Tensor, temperature: float, gen: torch.Generator,
+                  controls: dict[str, float] | None = None) -> tuple[int, np.ndarray]:
+    """Pick one of the 12 actions from 12-way logits.
+
+    Without ``controls``: softmax(logits / temperature), sampled (argmax at
+    temperature 0). With ``controls`` ({steer, brake, gas} temperatures): the
+    same 12-way distribution sampled in stages, steer from its marginal, then
+    brake given the chosen steer, then gas given both, each stage sharpened by
+    its own temperature (0 = argmax for that stage). Returns the action and the
+    distribution it was drawn from.
+    """
+    logits = logits.float().cpu()
+    if controls is None:
+        if temperature <= 0:
+            probs = torch.softmax(logits, -1)
+            return int(probs.argmax()), probs.numpy()
+        probs = torch.softmax(logits / temperature, -1)
+        return int(torch.multinomial(probs, 1, generator=gen)), probs.numpy()
+
+    p = torch.softmax(logits, -1).double().view(2, 2, 3)  # [gas, brake, steer]
+    t_s, t_b, t_g = (controls.get(k, 1.0) for k in ("steer", "brake", "gas"))
+    q_s = _temper(p.sum((0, 1)), t_s)
+    q_b = torch.stack([_temper(p[:, :, s].sum(0), t_b) for s in range(3)], -1)  # [brake, steer]
+    q_g = torch.stack([torch.stack([_temper(p[:, b, s], t_g) for s in range(3)], -1)
+                       for b in range(2)], 1)  # [gas, brake, steer]
+    s = int(torch.multinomial(q_s.float(), 1, generator=gen))
+    b = int(torch.multinomial(q_b[:, s].float(), 1, generator=gen))
+    g = int(torch.multinomial(q_g[:, b, s].float(), 1, generator=gen))
+    # The distribution actually sampled from: q(s) q(b|s) q(g|s,b).
+    joint = q_s[None, None, :] * q_b[None] * q_g
+    return g * 6 + b * 3 + s, joint.flatten().float().numpy()
+
+
+def _temper(w: torch.Tensor, t: float) -> torch.Tensor:
+    """Normalise ``w`` and sharpen it by temperature ``t`` (0 = one-hot argmax)."""
+    w = w / w.sum().clamp(min=1e-30)
+    if t <= 0:
+        q = torch.zeros_like(w)
+        q[int(w.argmax())] = 1.0
+        return q
+    q = w.clamp(min=1e-30) ** (1.0 / t)
+    return q / q.sum()
+
+
 def load_policy(path: str, cfg_eval, id: str | None = None):
     """A checkpoint as an eval policy on the configured eval device."""
+    if cfg_eval.device == "remote":
+        from .policy_server import RemotePolicy
+
+        return RemotePolicy(path, cfg_eval, id=id)
     if cfg_eval.device == "directml":
         from .onnx_policy import OnnxPolicy
 
+        assert cfg_eval.temperature_controls is None and cfg_eval.action_source == "policy", \
+            "per-control temperatures and action_source are not implemented for directml"
         return OnnxPolicy.from_checkpoint(path, id=id, provider="dml", device_id=cfg_eval.dml_device_id)
-    return ModelPolicy.from_checkpoint(path, id=id, inference=cfg_eval.inference, device=cfg_eval.device)
+    policy = ModelPolicy.from_checkpoint(path, id=id, inference=cfg_eval.inference, device=cfg_eval.device)
+    policy.set_sampling(cfg_eval.temperature_controls, cfg_eval.action_source)
+    return policy
 
 
 class ModelPolicy:
@@ -64,6 +116,21 @@ class ModelPolicy:
         self.norm = norm
         self.inference = inference or cfg.eval.inference
         self.device = device or next(model.parameters()).device
+        self.temperature_controls: dict[str, float] | None = None
+        self.action_source = "policy"
+
+    def set_sampling(self, temperature_controls: dict[str, float] | None, action_source: str = "policy") -> None:
+        if temperature_controls is not None:
+            unknown = set(temperature_controls) - {"steer", "brake", "gas"}
+            if unknown:
+                raise ValueError(f"unknown control(s) in temperature_controls: {sorted(unknown)}")
+        if action_source != "policy":
+            k = int(action_source.removeprefix("chunk")) if action_source.startswith("chunk") else 0
+            if not 1 <= k <= self.model.n_chunk:
+                raise ValueError(f"action_source {action_source!r} needs an action-chunk head of length >= "
+                                 f"{max(k, 1)}; this model has {self.model.n_chunk}")
+        self.temperature_controls = dict(temperature_controls) if temperature_controls else None
+        self.action_source = action_source
 
     @classmethod
     def from_checkpoint(cls, path: str, id: str | None = None, inference: str | None = None,
@@ -135,17 +202,13 @@ class ModelEpisode:
                 out = {k: v[0, 0] for k, v in out.items()}
             else:
                 out = self._full_window(model, dev)
-            logits = out["logits"]
+            if self.p.action_source == "policy":
+                logits = out["logits"]
+            else:  # chunkK: the chunk head's prediction for step t+K
+                logits = out["chunk_logits"][int(self.p.action_source.removeprefix("chunk")) - 1]
         self.aux = path_aux(out["path_mean"].float().cpu().numpy(), out["path_logvar"].float().cpu().numpy(),
                             self.p.norm, self.p.cfg.data.waypoint_horizons_s)
-        logits = logits.float().cpu()
-        if self.temperature <= 0:
-            probs = torch.softmax(logits, -1)
-            a = int(probs.argmax())
-        else:
-            probs = torch.softmax(logits / self.temperature, -1)
-            a = int(torch.multinomial(probs, 1, generator=self.gen))
-        self.last = (a, probs.numpy())
+        self.last = sample_action(logits, self.temperature, self.gen, self.p.temperature_controls)
         return self.last
 
     def _full_window(self, model: Model, dev) -> dict:

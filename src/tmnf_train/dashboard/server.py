@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -89,6 +90,8 @@ class CounterSampler(threading.Thread):
 
     @staticmethod
     def _total_ram() -> float:
+        if sys.platform != "win32":
+            return _meminfo().get("MemTotal", 0.0)
         try:
             out = subprocess.run(["powershell", "-NoProfile", "-Command",
                                   "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
@@ -98,6 +101,9 @@ class CounterSampler(threading.Thread):
             return 0.0
 
     def run(self) -> None:
+        if sys.platform != "win32":
+            self._run_linux()
+            return
         while True:
             try:
                 proc = subprocess.Popen(["powershell", "-NoProfile", "-Command", self.SCRIPT],
@@ -113,6 +119,22 @@ class CounterSampler(threading.Thread):
             except OSError:
                 pass
             time.sleep(5)  # PowerShell went away; start it again
+
+    def _run_linux(self) -> None:
+        """CPU and RAM from /proc every 5 s (no per-adapter GPU counters)."""
+        prev = _cpu_times()
+        while True:
+            time.sleep(5)
+            cur = _cpu_times()
+            busy = (cur[0] - prev[0]) / max(1, cur[1] - prev[1])
+            prev = cur
+            avail = _meminfo().get("MemAvailable")
+            self.samples.append({
+                "t": time.time(), "cpu": 100.0 * busy,
+                "ram_used_gb": (self.total_ram_mb - avail) / 1024 if avail is not None and self.total_ram_mb else None,
+                "ram_total_gb": self.total_ram_mb / 1024 if self.total_ram_mb else None,
+                "igpu_util": None, "nvidia_util_counters": None,
+            })
 
     def _ingest(self, rows: list[dict]) -> None:
         util: dict[str, float] = {}
@@ -147,7 +169,41 @@ class CounterSampler(threading.Thread):
 
 # ------------------------------------------------------------------- run state
 
+def _meminfo() -> dict[str, float]:
+    """/proc/meminfo in MB."""
+    out = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            k, _, v = line.partition(":")
+            out[k] = float(v.split()[0]) / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return out
+
+
+def _cpu_times() -> tuple[int, int]:
+    """(busy, total) jiffies from /proc/stat."""
+    try:
+        f = [int(x) for x in Path("/proc/stat").read_text().split("\n", 1)[0].split()[1:]]
+        idle = f[3] + (f[4] if len(f) > 4 else 0)
+        return sum(f) - idle, sum(f)
+    except (OSError, ValueError, IndexError):
+        return 0, 1
+
+
 def _processes() -> dict:
+    if sys.platform != "win32":
+        try:
+            out = subprocess.run(["ps", "-eo", "args"], capture_output=True, text=True, timeout=30).stdout
+        except (OSError, subprocess.SubprocessError):
+            return {}
+        cmd = [c for c in out.splitlines()[1:] if "tmnf_train" in c or "tmnf-train" in c]
+        return {
+            "trainer": sum(1 for c in cmd if re.search(r"\btrain\b", c) and "eval" not in c and "serve" not in c),
+            "eval_watch": sum(1 for c in cmd if "eval-watch" in c),
+            "policy_server": sum(1 for c in cmd if "serve-policy" in c),
+            "games": 0,  # the games run on the eval box
+        }
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",

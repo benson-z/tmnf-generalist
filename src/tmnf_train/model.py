@@ -13,7 +13,8 @@ a rolling KV cache of the last ``window`` frames keeps exactly the context the
 model was trained with (``Model.step``), and each frame is encoded once.
 
 Heads read the mean of a frame's output tokens:
-  policy    12 logits
+  policy    12 logits (``model.policy_head: joint``), or 12 log-probabilities
+            built as P(steer) P(brake|steer) P(gas|steer,brake) (``chain``)
   path      waypoints (lateral, forward) + speed at each horizon, as mean and
             log-variance (heteroscedastic, i.e. uncertainty-weighted, NLL)
   progress  arc length over the next H seconds (normalised), scalar
@@ -142,6 +143,25 @@ class Block(nn.Module):
         return x, kv
 
 
+def chain_logp(raw: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """The chain-rule policy head: 12 raw outputs -> 12-way log-probabilities.
+
+    ``raw[..., 0:3]`` are steer logits, ``raw[..., 3:6]`` the brake logit given
+    each steer value, ``raw[..., 6:12]`` the gas logit given each (steer, brake)
+    pair (index ``2 * steer + brake``). Returns the joint log-probabilities in
+    the action layout (``gas * 6 + brake * 3 + steer``) and log P(brake | steer)
+    as (..., 2, 3) indexed [brake, steer], for the brake loss weight.
+    """
+    raw = raw.float()
+    steer = F.log_softmax(raw[..., 0:3], -1)  # (..., 3)
+    bl = raw[..., 3:6]
+    brake = torch.stack([F.logsigmoid(-bl), F.logsigmoid(bl)], -2)  # (..., b, s)
+    gl = raw[..., 6:12].unflatten(-1, (3, 2)).transpose(-1, -2)  # (..., b, s)
+    gas = torch.stack([F.logsigmoid(-gl), F.logsigmoid(gl)], -3)  # (..., g, b, s)
+    joint = steer[..., None, None, :] + brake[..., None, :, :] + gas
+    return joint.flatten(-3), brake
+
+
 def block_causal_mask(frame_of: torch.Tensor, frame_of_keys: torch.Tensor | None = None) -> torch.Tensor:
     """Boolean (Lq, Lk) mask, True = may attend: key frame <= query frame."""
     fk = frame_of if frame_of_keys is None else frame_of_keys
@@ -163,7 +183,10 @@ class Model(nn.Module):
         self.blocks = nn.ModuleList(Block(m.width, m.heads, m.mlp_ratio, m.dropout) for _ in range(m.layers))
         self.norm = nn.LayerNorm(m.width)
         self.n_h = n_horizons
-        self.policy = nn.Linear(m.width, N_ACTIONS)
+        self.policy_head = m.policy_head
+        if self.policy_head not in ("joint", "chain"):
+            raise ValueError(f"model.policy_head must be joint or chain, not {self.policy_head!r}")
+        self.policy = nn.Linear(m.width, N_ACTIONS)  # chain: 3 + 3 + 6 raw outputs
         self.path = nn.Linear(m.width, n_horizons * 3 * 2)  # mean + log-variance
         self.progress = nn.Linear(m.width, 1)
         self.n_chunk = cfg.data.action_chunk
@@ -195,8 +218,14 @@ class Model(nn.Module):
         pooled = self.norm(h.mean(2))  # (B, T, width)
         path_in = pooled.detach() if self.path_detach else pooled
         path = self.path(path_in).view(*pooled.shape[:2], self.n_h, 3, 2)
-        out = {
-            "logits": self.policy(pooled).float(),
+        raw = self.policy(pooled)
+        out = {}
+        if self.policy_head == "chain":
+            # Log-probabilities are valid logits: softmax/CE leave them as is.
+            out["logits"], out["brake_logp"] = chain_logp(raw)
+        else:
+            out["logits"] = raw.float()
+        out |= {
             "path_mean": path[..., 0].float(),
             "path_logvar": path[..., 1].float().clamp(-8, 8),
             "progress": self.progress(pooled).squeeze(-1).float(),

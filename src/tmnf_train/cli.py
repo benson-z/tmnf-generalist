@@ -9,6 +9,7 @@
     tmnf-train train                            train (evals every K epochs)
     tmnf-train eval-watch                       evaluate a run's checkpoints as they appear
     tmnf-train dashboard                        live progress dashboard on localhost
+    tmnf-train serve-policy                     run eval policies for a harness on another machine
 
 Every command takes ``--config file.yaml`` and ``--set section.key=value``.
 """
@@ -64,7 +65,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--poll", type=float, default=60.0, help="seconds between checks")
     p.add_argument("--once", action="store_true", help="evaluate what is there, then exit")
 
+    p = sub.add_parser("serve-policy", help="serve checkpoints to a remote eval harness (eval.device: remote)")
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=9555)
+    p.add_argument("--device", default="auto", help="auto | cuda | cpu")
+
     args = ap.parse_args(argv)
+    if args.cmd == "serve-policy":
+        from .policy_server import serve
+
+        serve(args.host, args.port, args.device)
+        return
     if args.cmd == "render-paths":
         from pathlib import Path
 

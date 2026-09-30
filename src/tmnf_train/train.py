@@ -8,7 +8,15 @@ Layout under ``<train.run_dir>/<train.run_name>/``:
     checkpoints/*.pt       every checkpoint, never deleted
     eval/<ckpt>/...        in-game rollouts (videos, metrics) per checkpoint
 
-Loss = w_policy * CE(policy) + w_path * NLL(path) + w_progress * MSE(progress).
+Loss = w_policy * CE(policy) + w_path * NLL(path) + w_progress * MSE(progress)
+(+ w_chunk * CE(chunk) with action chunking). With the chain policy head, the
+policy term is CE + (w_brake - 1) * CE(brake | steer): the joint CE splits
+exactly into steer, brake-given-steer and gas-given-both parts, and w_brake
+reweights the middle one.
+
+With ``train.ema_decay`` > 0 an exponential moving average of the weights is
+kept alongside, and every checkpoint ``<name>.pt`` gets an ``<name>_ema.pt``
+twin in the same format holding those weights (loadable as any checkpoint).
 Path and progress targets are normalised by corpus statistics and the path NLL
 starts at log-variance 0, so all three terms start at comparable magnitudes
 (CE ~ ln 12 = 2.5, the others ~0.5-1).
@@ -38,7 +46,7 @@ from .model import Model, n_params
 
 # ------------------------------------------------------------------ losses
 
-def losses(out: dict, lab: Labels, label_mode: str = "hard") -> dict[str, torch.Tensor]:
+def losses(out: dict, lab: Labels, label_mode: str = "hard", w_brake: float = 1.0) -> dict[str, torch.Tensor]:
     act = lab.action
     if label_mode == "soft":
         m = (act >= 0).flatten().float()
@@ -46,6 +54,8 @@ def losses(out: dict, lab: Labels, label_mode: str = "hard") -> dict[str, torch.
         ce = (ce_all * m).sum() / m.sum().clamp(min=1)
     else:
         ce = F.cross_entropy(out["logits"].flatten(0, 1), act.flatten(), ignore_index=-1)
+    if "brake_logp" in out and w_brake != 1.0:
+        ce = ce + (w_brake - 1.0) * brake_ce(out["brake_logp"], lab, label_mode)
 
     ok = lab.path_ok.unsqueeze(-1).expand_as(lab.path).float()
     mu, lv = out["path_mean"], out["path_logvar"]
@@ -61,6 +71,42 @@ def losses(out: dict, lab: Labels, label_mode: str = "hard") -> dict[str, torch.
         ce_c = -(lab.chunk_soft * F.log_softmax(out["chunk_logits"], -1)).sum(-1)
         ls["chunk"] = (ce_c * cok).sum() / cok.sum().clamp(min=1)
     return ls
+
+
+def brake_ce(brake_logp: torch.Tensor, lab: Labels, label_mode: str) -> torch.Tensor:
+    """-sum q(steer, brake) log P(brake | steer): the chain head's brake term.
+
+    ``brake_logp`` is (B, T, 2, 3) indexed [brake, steer]; q is the target's
+    (steer, brake) marginal, from the soft or the majority label.
+    """
+    act = lab.action
+    m = (act >= 0).float()
+    if label_mode == "soft":
+        q = lab.action_soft
+    else:
+        q = F.one_hot(act.clamp(min=0), 12).float()
+    q_bs = q.unflatten(-1, (2, 2, 3)).sum(-3)  # (B, T, brake, steer)
+    per = -(q_bs * brake_logp).sum((-1, -2))
+    return (per * m).sum() / m.sum().clamp(min=1)
+
+
+class Ema:
+    """fp32 exponential moving average of a model's floating-point state."""
+
+    def __init__(self, model, decay: float):
+        self.decay = decay
+        self.shadow = {k: v.detach().float().clone() for k, v in model.state_dict().items() if v.is_floating_point()}
+
+    @torch.no_grad()
+    def update(self, model) -> None:
+        sd = model.state_dict()
+        keys = list(self.shadow)
+        torch._foreach_lerp_([self.shadow[k] for k in keys], [sd[k].detach().float() for k in keys], 1.0 - self.decay)
+
+    def state_dict_like(self, model) -> dict:
+        """The model's state dict with the averaged weights swapped in."""
+        sd = model.state_dict()
+        return {k: (self.shadow[k].to(v.dtype) if k in self.shadow else v) for k, v in sd.items()}
 
 
 @torch.no_grad()
@@ -254,13 +300,23 @@ class RunLog:
         print(json.dumps(brief), flush=True)
 
 
-def save_ckpt(path: Path, model, opt, cfg: Config, manifest: dict, state: dict) -> None:
-    tmp = path.with_suffix(".tmp")
-    torch.save({
-        "model": model.state_dict(), "opt": opt.state_dict(), "config": cfg.to_dict(),
+def save_ckpt(path: Path, model, opt, cfg: Config, manifest: dict, state: dict, ema: Ema | None = None) -> None:
+    base = {
+        "config": cfg.to_dict(),
         "n_horizons": len(manifest["waypoint_horizons_s"]),
         "norm": {k: manifest[k] for k in ("path_mean", "path_std", "progress_mean", "progress_std")},
         "state": state,
+    }
+    if ema is not None:
+        # The twin first: a checkpoint that exists always has its EMA twin.
+        ema_path = path.with_name(path.stem + "_ema.pt")
+        tmp = ema_path.with_suffix(".tmp")
+        torch.save({**base, "model": ema.state_dict_like(model), "ema_of": path.name, "ema_decay": ema.decay}, tmp)
+        tmp.replace(ema_path)
+    tmp = path.with_suffix(".tmp")
+    torch.save({
+        **base, "model": model.state_dict(), "opt": opt.state_dict(),
+        **({"ema": ema.shadow} if ema is not None else {}),
         "rng": {"torch": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state_all(),
                 "numpy": np.random.get_state(), "python": random.getstate()},
     }, tmp)
@@ -273,7 +329,7 @@ def latest_ckpt(ckpt_dir: Path) -> Path | None:
         m = re.search(r"_s(\d{7})", p.stem)
         return (int(m.group(1)) if m else -1, p.stem.endswith("_end"))
 
-    cks = sorted(ckpt_dir.glob("*.pt"), key=key)
+    cks = sorted((p for p in ckpt_dir.glob("*.pt") if not p.stem.endswith("_ema")), key=key)
     return cks[-1] if cks else None
 
 
@@ -314,6 +370,7 @@ def run(cfg: Config, *, resume: bool = False, max_steps: int | None = None) -> N
     steps_per_epoch = WindowLoader(cfg, train_runs, manifest, 0).total_windows // cfg.train.batch_size
     total_steps = steps_per_epoch * cfg.train.epochs
 
+    ema = Ema(model, cfg.train.ema_decay) if cfg.train.ema_decay > 0 else None
     state = {"step": 0, "epoch": 0, "windows_in_epoch": 0}
     if resume and (ck := latest_ckpt(ckpt_dir)) is not None:
         blob = torch.load(ck, map_location="cpu", weights_only=False)
@@ -327,6 +384,11 @@ def run(cfg: Config, *, resume: bool = False, max_steps: int | None = None) -> N
                     if torch.is_tensor(t) and t.shape == p.shape and t.stride() != p.stride():
                         opt.state[p][k] = torch.empty_like(p, dtype=t.dtype).copy_(t)
         state = blob["state"]
+        if ema is not None:
+            if "ema" in blob:
+                ema.shadow = {k: v.to(dev) for k, v in blob["ema"].items()}
+            else:  # resuming a run that had no EMA: start it from here
+                ema = Ema(model, cfg.train.ema_decay)
         torch.set_rng_state(blob["rng"]["torch"])
         torch.cuda.set_rng_state_all(blob["rng"]["cuda"])
         np.random.set_state(blob["rng"]["numpy"])
@@ -351,7 +413,7 @@ def run(cfg: Config, *, resume: bool = False, max_steps: int | None = None) -> N
                 obs, lab = to_device(obs, lab, dev)
                 out = model(obs)
                 # Some metrics (rare-class recalls) are absent from some batches.
-                for k, v in {**{f"loss_{k}": v.item() for k, v in losses(out, lab, cfg.train.label_mode).items()}, **metrics(out, lab, norm)}.items():
+                for k, v in {**{f"loss_{k}": v.item() for k, v in losses(out, lab, cfg.train.label_mode, cfg.train.w_brake).items()}, **metrics(out, lab, norm)}.items():
                     tot[k] = tot.get(k, 0.0) + v
                     cnt[k] = cnt.get(k, 0) + 1
         model.train()
@@ -359,7 +421,7 @@ def run(cfg: Config, *, resume: bool = False, max_steps: int | None = None) -> N
 
     def checkpoint(tag: str) -> str:
         name = f"{cfg.train.run_name}_e{state['epoch']:02d}_s{state['step']:07d}{tag}"
-        save_ckpt(ckpt_dir / f"{name}.pt", model, opt, cfg, manifest, dict(state))
+        save_ckpt(ckpt_dir / f"{name}.pt", model, opt, cfg, manifest, dict(state), ema)
         return name
 
     model.train()
@@ -374,7 +436,7 @@ def run(cfg: Config, *, resume: bool = False, max_steps: int | None = None) -> N
         for obs, lab in feed:
             with amp_ctx(cfg, dev):
                 out = model(obs)
-                ls = losses(out, lab, cfg.train.label_mode)
+                ls = losses(out, lab, cfg.train.label_mode, cfg.train.w_brake)
                 loss = sum(w[k] * v for k, v in ls.items()) / accum
             loss.backward()
             # Kept on the GPU: a .item() here would sync every micro-step.
@@ -391,6 +453,8 @@ def run(cfg: Config, *, resume: bool = False, max_steps: int | None = None) -> N
             gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.train.grad_clip)
             opt.step()
             opt.zero_grad(set_to_none=True)
+            if ema is not None:
+                ema.update(model)
             state["step"] += 1
             step = state["step"]
             if step % cfg.train.log_every == 0:
