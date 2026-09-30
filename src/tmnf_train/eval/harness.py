@@ -343,6 +343,10 @@ def run_rollout(
                 "t": t, "speed": message.display_speed, "action": action, "name": actions.name(action),
                 "pos": [round(v, 2) for v in message.position],
                 "yaw": round(message.yaw_pitch_roll[0], 4),
+                # The game's own slide flag and car-space velocity (m/s), to
+                # measure drifting against the demos' samples.
+                "sliding": bool(message.sliding),
+                "local_speed": [round(v, 2) for v in message.local_speed],
                 "cam": [[round(v, 3) for v in message.camera_position],
                         [round(v, 4) for v in message.camera_yaw_pitch_roll], round(message.camera_fov, 2)],
                 **({"path": {"mean": np.round(aux["mean"], 2).tolist(), "std": np.round(aux["std"], 2).tolist(),
