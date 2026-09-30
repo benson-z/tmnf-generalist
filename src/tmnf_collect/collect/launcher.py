@@ -28,6 +28,8 @@ if IS_WINDOWS:
     import ctypes
     from ctypes import wintypes
 
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
 GAME_EXE = "TmForever.exe"
 
 # A minimized Direct3D 9 window stops rendering, which starves the collector's
@@ -74,9 +76,7 @@ def _windows_for(pid: int) -> list[int]:
     """Return visible top-level windows owned by ``pid``."""
     user32 = _user32()
     found: list[int] = []
-    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-
-    @enum_proc
+    @WNDENUMPROC
     def visit(hwnd: int, _lparam: int) -> bool:
         owner = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))

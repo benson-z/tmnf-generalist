@@ -10,7 +10,7 @@
 //
 // Everything on the wire is little-endian.
 
-const uint PROTO_VERSION = 5;
+const uint PROTO_VERSION = 6;
 
 // plugin -> controller
 const uint8 MSG_HELLO = 0x01;
@@ -23,6 +23,9 @@ const uint8 MSG_TICK = 0x06;
 const uint8 CMD_COMMAND = 0x10;
 const uint8 CMD_CONFIG = 0x11;
 const uint8 CMD_FOCUS = 0x14;
+// Drive mode: the keys to hold from the sample tick just sent until the next
+// one, as decimal text of the MSG_TICK bit mask (up 1, down 2, left 4, right 8).
+const uint8 CMD_ACTION = 0x15;
 
 // event kinds
 const uint8 EV_RUN_START = 1;
@@ -70,6 +73,12 @@ bool g_frameHeld = false;
 float g_speed = 1.0f;
 // Ticks that ran anyway while held: should stay at zero.
 int g_heldTicks = 0;
+// Drive mode: a policy on the controller side chooses the inputs. Every sample
+// tick is held (at any speed) until the controller answers the frame with a
+// CMD_ACTION, which is applied and then the simulation resumes. Nothing else
+// changes: the frame is captured exactly as during collection.
+bool g_drive = false;
+bool g_awaitAction = false;
 int p_raceTime = 0;
 uint p_displaySpeed = 0;
 float p_velX = 0, p_velY = 0, p_velZ = 0;
@@ -168,6 +177,7 @@ bool EnsureConnected()
 
 void Disconnect()
 {
+    ReleaseHold();
     @g_sock = null;
     g_connected = false;
     g_pending = false;
@@ -219,6 +229,9 @@ void PollCommands()
             Graphics::FocusGameWindow();
         } else if (kind == CMD_CONFIG) {
             ApplyConfig(payload);
+        } else if (kind == CMD_ACTION) {
+            // Decimal text, so a zero mask is not an empty/NUL string.
+            ApplyAction(uint8(Text::ParseUInt(payload)));
         }
     }
 }
@@ -247,6 +260,7 @@ void ApplyConfigEntry(const string&in entry)
         if (g_collecting && value != "1") log("TMNFCollect: ticks run while held: " + g_heldTicks);
         g_heldTicks = 0;
         g_collecting = (value == "1");
+        if (!g_collecting) ReleaseHold();
         g_lastSampleTime = -1000000;
         ApplyRaceInterface();
         // Per run, not per game session: the controller reads this back as
@@ -265,9 +279,43 @@ void ApplyConfigEntry(const string&in entry)
         g_frameBarrier = (value == "1");
     } else if (key == "speed") {
         g_speed = Text::ParseFloat(value);
+    } else if (key == "drive") {
+        g_drive = (value == "1");
+        if (!g_drive) ReleaseHold();
     } else if (key == "hide_ui") {
         g_hideUi = (value == "1");
         ApplyRaceInterface();
+    }
+}
+
+// Drive mode: put the policy's keys in and let the simulation run to the next
+// sample tick. Called from Render(), right after the sample tick's rewind, which
+// is the state SetInputState is safe in (and how Linesight drives the game).
+void ApplyAction(uint8 keys)
+{
+    if (!g_awaitAction) return;
+    SimulationManager@ sim = GetSimulationManager();
+    sim.SetInputState(InputType::Up, (keys & 1) != 0 ? 1 : 0);
+    sim.SetInputState(InputType::Down, (keys & 2) != 0 ? 1 : 0);
+    sim.SetInputState(InputType::Left, (keys & 4) != 0 ? 1 : 0);
+    sim.SetInputState(InputType::Right, (keys & 8) != 0 ? 1 : 0);
+    sim.SetInputState(InputType::Gas, 0);
+    sim.SetInputState(InputType::Steer, 0);
+    g_awaitAction = false;
+    if (g_frameHeld) {
+        sim.SetSpeed(g_speed);
+        g_frameHeld = false;
+    }
+}
+
+// Let a held simulation go without applying anything, e.g. when the controller
+// stops a rollout while the game waits for an action.
+void ReleaseHold()
+{
+    g_awaitAction = false;
+    if (g_frameHeld) {
+        GetSimulationManager().SetSpeed(g_speed);
+        g_frameHeld = false;
     }
 }
 
@@ -440,7 +488,7 @@ void OnRunStep(SimulationManager@ sim)
     // Every sample point also snaps the chase camera to the car. The game
     // smooths it on wall-clock time, so without this the frame for a given
     // car state depends on frame pacing and is not reproducible.
-    if (g_frameBarrier) {
+    if (g_frameBarrier || g_drive) {
         // A rewind to the state the game is already in changes no physics.
         // What it does is drop the ticks the loop had still queued for this
         // iteration, so that speed 0 takes effect now rather than a few
@@ -457,6 +505,7 @@ void OnRunStep(SimulationManager@ sim)
         sim.SetInputState(InputType::Right, inputs.Right ? 1 : 0);
         sim.SetSpeed(0.0f);
         g_frameHeld = true;
+        if (g_drive) g_awaitAction = true;
     } else {
         sim.ResetCamera();
     }
@@ -485,7 +534,8 @@ void OnGameStateChanged(TM::GameState state)
 
 void Render()
 {
-    if (g_frameHeld) {
+    // In drive mode the hold lasts until the controller's action arrives.
+    if (g_frameHeld && !g_awaitAction) {
         GetSimulationManager().SetSpeed(g_speed);
         g_frameHeld = false;
     }

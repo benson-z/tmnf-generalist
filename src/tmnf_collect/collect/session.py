@@ -419,6 +419,41 @@ class Session:
             if on_reset is not None:
                 on_reset()
 
+    def start_driven_run(
+        self,
+        staged_challenge: str,
+        *,
+        map_timeout: float = 120.0,
+        reset_timeout: float = 15.0,
+    ) -> None:
+        """Load a map and restart it in drive mode, for a policy to drive.
+
+        The same arming sequence as :meth:`record_map_run` (focus, restart),
+        but without a script: once the countdown is under way the plugin is put
+        in drive mode, so from race time 0 every 20 Hz sample is held until
+        the controller answers it with :meth:`Controller.act`. The caller reads
+        the samples, and must turn collection off again when it is done (which
+        also releases a held simulation).
+        """
+        if self.game_state != STATE_MENUS:
+            self.leave_map()
+        self.load_map(staged_challenge, intro_timeout=map_timeout)
+        # Not driving while the race restarts: a held tick would freeze the
+        # countdown.
+        self._ctrl.configure(collect=False, drive=False)
+        # TMInterface injects inputs through the game's key bindings, which an
+        # instance only has once it has been foreground (see record_map_run).
+        self._ctrl.focus()
+        time.sleep(0.4)
+        self._command("press delete")
+        if not self._wait_for_event(EV_RUN_RESET, timeout=reset_timeout):
+            raise SessionError("the race did not restart for the driven run")
+        self._ctrl.configure(collect=True, drive=True)
+
+    def stop_driven_run(self) -> None:
+        """Leave drive mode; releases the simulation if it is held."""
+        self._ctrl.configure(collect=False, drive=False)
+
     # How long the car is given to show any sign of being driven. Every replay
     # we re-drive starts by accelerating, so a car still stationary after this
     # is one whose inputs were never armed.

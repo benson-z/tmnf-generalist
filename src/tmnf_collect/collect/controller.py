@@ -101,6 +101,7 @@ class Controller:
         hide_ui: bool | None = None,
         frame_barrier: bool | None = None,
         speed: float | None = None,
+        drive: bool | None = None,
     ) -> None:
         settings: dict[str, object] = {}
         if collect is not None:
@@ -117,8 +118,14 @@ class Controller:
             settings["frame_barrier"] = frame_barrier
         if speed is not None:
             settings["speed"] = speed
+        if drive is not None:
+            settings["drive"] = drive
         if settings:
             self._send(protocol.encode_config(**settings))
+
+    def act(self, up: bool, down: bool, left: bool, right: bool) -> None:
+        """Drive mode: answer the held sample with the keys to hold next."""
+        self._send(protocol.encode_action(up, down, left, right))
 
     def focus(self) -> None:
         """Bring this instance's window forward."""

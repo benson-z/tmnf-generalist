@@ -11,7 +11,7 @@ import socket
 import struct
 from dataclasses import dataclass
 
-PROTO_VERSION = 5
+PROTO_VERSION = 6
 
 # plugin -> controller
 MSG_HELLO = 0x01
@@ -23,6 +23,8 @@ MSG_TICK = 0x06
 CMD_COMMAND = 0x10
 CMD_CONFIG = 0x11
 CMD_FOCUS = 0x14
+# drive mode: the keys to hold until the next sample tick
+CMD_ACTION = 0x15
 
 # event kinds
 EV_RUN_START = 1
@@ -253,3 +255,13 @@ def encode_config(**settings: object) -> bytes:
 def encode_focus() -> bytes:
     """Bring this instance's game window to the foreground."""
     return struct.pack("<BH", CMD_FOCUS, 0)
+
+
+def encode_action(up: bool, down: bool, left: bool, right: bool) -> bytes:
+    """Drive mode: keys to hold from the sample just received to the next one.
+
+    Sent as the decimal text of the same bit mask MSG_TICK uses.
+    """
+    mask = int(up) | int(down) << 1 | int(left) << 2 | int(right) << 3
+    body = str(mask).encode("ascii")
+    return struct.pack("<BH", CMD_ACTION, len(body)) + body
