@@ -73,7 +73,11 @@ class DataConfig:
     # "video" decodes H.265 on the fly (NVDEC when available); "memmap" reads a
     # uint8 cache at the training resolution built by `tmnf-train cache`.
     source: str = "video"
-    decoder: str = "auto"  # auto | nvdec | cpu
+    # auto | nvdec | cpu. CPU decoding feeds the loader faster than NVDEC: with
+    # 8 workers it gave 1,411 frames/s of training against 1,200 with NVDEC and
+    # 6 workers, and no data wait (laptop, 2026-10-01). Past ~6k frames/s the
+    # per-frame CPU work (download, rgb24, piping) is the limit, not the decoder.
+    decoder: str = "cpu"
     mirror_prob: float = 0.5
     val_fraction: float = 0.02  # held-out runs, for a sanity-check loss only
     drop_respawn_runs: bool = True
@@ -91,7 +95,7 @@ class DataConfig:
     # separate work_dir: the manifest's path statistics change shape).
     path_height: bool = False
     windows_per_epoch: int | None = None  # null = one pass over all windows at stride `window`
-    loader_workers: int = 6
+    loader_workers: int = 8  # 12 ran out of shared memory and hung training
     prefetch_batches: int = 4
 
 
@@ -163,7 +167,11 @@ class TrainConfig:
     path_detach: bool = False
     # Keep the CNN's activations in NHWC (channels_last) layout for cuDNN.
     # Measured 0.9x alone (GroupNorm), and with compile the gradients were
-    # wrong (torch 2.11 / triton-windows 3.6); leave off.
+    # wrong (torch 2.11 / triton-windows 3.6); leave off. Still wrong on Linux
+    # (torch 2.11, 2026-10-01): in bf16, compile + channels_last gives a
+    # whole-model gradient cosine of 0.958 against the plain model, with the
+    # error in the encoder's GroupNorm residual blocks; fp32, or either one
+    # alone, is correct. Eager channels_last is slower than compiled NCHW.
     channels_last: bool = False
     # Seeds are always fixed. True also forces deterministic cuDNN kernels
     # (bitwise-repeatable, measured ~2x slower); False lets cuDNN autotune.
