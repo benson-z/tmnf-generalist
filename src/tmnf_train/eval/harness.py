@@ -38,7 +38,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
 
 from tmnf_collect.collect import install, staging
 from tmnf_collect.collect.protocol import (
@@ -57,10 +56,9 @@ from tmnf_collect.common.replays import ReplayError, read_replay
 from .. import actions
 from ..config import EvalConfig
 from .maps import DemoLine, MapInfo, resolve
-from .projection import draw_path
+from .frame_ui import compose
 from .policies import Policy
 
-OVERLAY_H = 28
 HIDDEN_SUFFIX = ".tmnf-train-hidden"
 
 
@@ -161,41 +159,6 @@ class RolloutResult:
 
 
 # ----------------------------------------------------------------- video
-
-def _font(size: int):
-    for name in ("consola.ttf", "arial.ttf"):
-        try:
-            return ImageFont.truetype(name, size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
-
-
-_FONT = None
-
-
-def overlay(frame: np.ndarray, race_ms: int, speed: int, action: int, prob: float | None) -> np.ndarray:
-    """The frame with a strip underneath: time, speed, chosen action and keys."""
-    global _FONT
-    if _FONT is None:
-        _FONT = _font(14)
-    h, w, _ = frame.shape
-    canvas = Image.new("RGB", (w, h + OVERLAY_H), (16, 16, 20))
-    canvas.paste(Image.fromarray(frame), (0, 0))
-    d = ImageDraw.Draw(canvas)
-    p = f" p={prob:.2f}" if prob is not None else ""
-    d.text((4, h + 6), f"{race_ms / 1000:6.2f}s {speed:3d}km/h a{action:02d}{p}", font=_FONT, fill=(236, 238, 242))
-    up, down, left, right = actions.keys(action)
-    x0 = w - 4 * 22 - 4
-    for k, (label, on, col) in enumerate(
-        (("<", left, (90, 200, 250)), ("^", up, (90, 200, 250)), ("v", down, (250, 110, 110)), (">", right, (90, 200, 250)))
-    ):
-        box = (x0 + k * 22, h + 4, x0 + k * 22 + 19, h + 23)
-        d.rectangle(box, fill=col if on else None, outline=col if on else (70, 74, 82), width=1)
-        d.text(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), label, font=_FONT,
-               fill=(16, 16, 20) if on else (150, 156, 168), anchor="mm")
-    return np.asarray(canvas)
-
 
 def _bgra(rgb: np.ndarray) -> bytes:
     h, w, _ = rgb.shape
@@ -325,22 +288,10 @@ def run_rollout(
             counts[actions.name(action)] += 1
             result.steps += 1
 
-            p = float(probs[action]) if probs is not None else None
             aux = getattr(episode, "aux", None)  # path head, metres; None for the random policy
-            pose = {
-                "position": list(message.position), "yaw_pitch_roll": list(message.yaw_pitch_roll),
-                "camera_position": list(message.camera_position),
-                "camera_yaw_pitch_roll": list(message.camera_yaw_pitch_roll), "camera_fov": message.camera_fov,
-            }
-            drawn = frame
-            if aux is not None and cfg.overlay_path:
-                img = draw_path(Image.fromarray(frame), pose, np.asarray(aux["mean"])[:, :2],
-                                np.asarray(aux["std"])[:, 0], aux["horizons_s"])
-                drawn = np.asarray(img)
-            shown = overlay(drawn, t, message.display_speed, action, p) if cfg.overlay else drawn
-            encoder.add(_bgra(shown), shown.shape[1], shown.shape[0])
-            steps_file.write(json.dumps({
-                "t": t, "speed": message.display_speed, "action": action, "name": actions.name(action),
+            row = {
+                "t": t, "speed": message.display_speed, "cp": result.checkpoints,
+                "action": action, "name": actions.name(action),
                 "pos": [round(v, 2) for v in message.position],
                 "yaw": round(message.yaw_pitch_roll[0], 4),
                 # The game's own slide flag and car-space velocity (m/s), to
@@ -353,7 +304,12 @@ def run_rollout(
                              "horizons_s": aux["horizons_s"]}} if aux is not None else {}),
                 **({"off_line_m": round(dist, 2)} if dist is not None else {}),
                 "p": None if probs is None else [round(float(x), 4) for x in probs],
-            }) + "\n")
+            }
+            steps_file.write(json.dumps(row) + "\n")
+            # Drawn from the logged row, so `tmnf-train` can redraw any rollout
+            # from its raw video and steps log exactly as it was recorded.
+            shown = compose(frame, row, scale=cfg.video_scale, strip=cfg.overlay, path=cfg.overlay_path)
+            encoder.add(_bgra(shown), shown.shape[1], shown.shape[0])
     finally:
         steps_file.close()
         try:

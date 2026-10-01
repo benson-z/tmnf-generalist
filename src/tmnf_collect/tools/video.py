@@ -48,17 +48,17 @@ def _key_box(
     label: str,
     on: bool,
     font: ImageFont.ImageFont,
-    colour: tuple[int, int, int] = _ON,
+    color: tuple[int, int, int] = _ON,
 ) -> None:
-    fill = colour if on else None
-    draw.rectangle(box, fill=fill, outline=colour if on else _DIM, width=2)
-    text_colour = _BG if on else _MUTED
+    fill = color if on else None
+    draw.rectangle(box, fill=fill, outline=color if on else _DIM, width=2)
+    text_color = _BG if on else _MUTED
     left, top, right, bottom = box
     draw.text(
         ((left + right) / 2, (top + bottom) / 2),
         label,
         font=font,
-        fill=text_colour,
+        fill=text_color,
         anchor="mm",
     )
 
@@ -166,9 +166,9 @@ def render_frame(
         ("v", row["down"], right_edge - 2 * size - gap, _BRAKE),
         (">", row["right"], right_edge - size, _ON),
     ]
-    for label, on, x, colour in boxes:
+    for label, on, x, color in boxes:
         _key_box(
-            draw, (x, base_y, x + size, base_y + size), label, on, big, colour
+            draw, (x, base_y, x + size, base_y + size), label, on, big, color
         )
 
     return canvas

@@ -31,7 +31,8 @@ def path_aux(mean: np.ndarray, logvar: np.ndarray, norm: dict | None, horizons: 
     """The path head's output for one frame in metres / km/h.
 
     ``mean``/``logvar`` are (K, 3) in normalised units: lateral (left +),
-    forward, future speed. Returned for drawing and logging only.
+    forward, future speed, and with ``data.path_height`` a 4th column, the
+    height change (m, world up). Returned for drawing and logging only.
     """
     if norm is None:
         return None

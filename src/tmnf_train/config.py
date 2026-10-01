@@ -211,9 +211,16 @@ class EvalConfig:
     # Keep videos of only the most recent N checkpoints; null keeps all.
     keep_last_n_videos: int | None = None
     overlay: bool = True
-    # Draw the path head's predicted waypoints (0.5-3 s ahead) on eval videos,
-    # with a ring for the predicted lateral uncertainty.
+    # Draw the path head's prediction (0.5-3 s ahead) on eval videos as a
+    # car-wide ribbon on the road (in 3-D for models trained with
+    # data.path_height), colored by the planned speed change (green faster,
+    # white the same, red slower), with a halo for the predicted lateral
+    # uncertainty.
     overlay_path: bool = True
+    # Eval videos are upscaled by this integer factor (each pixel a block)
+    # before the path and the info strip are drawn, so text and lines are
+    # sharp. 1 = the game's 320x240.
+    video_scale: int = 2
     # kv_cache: rolling KV cache (each frame and each token computed once).
     # recompute: CNN tokens cached per frame, the transformer re-run over the
     # last window each step; exactly what training saw.

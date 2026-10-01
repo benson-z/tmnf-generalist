@@ -3,7 +3,7 @@
     tmnf-train render-paths <eval folder, map folder, or one rollout video>
 
 For each frame, draws the waypoints the model predicted at that frame
-(a smooth curve coloured near -> far, with a translucent +-1 sigma band) and the
+(a car-wide ribbon on the road colored near -> far, haloed by +-1 sigma) and the
 path the car actually took over the next 3 s (white line), both from that
 frame's camera. Writes ``<video stem>_paths.mp4`` next to the original, at 2x
 so the dots are legible. Needs rollouts recorded with path logging (the
@@ -61,7 +61,7 @@ def render_rollout(video: Path, steps: Path, out: Path | None = None) -> Path | 
             if path:
                 mean = np.asarray(path["mean"])
                 img = draw_path(img, pose, mean[:, :2], np.asarray(path["std"])[:, 0], path["horizons_s"],
-                                scale=SCALE)
+                                scale=SCALE, height=mean[:, 3] if mean.shape[1] > 3 else None)
             d = ImageDraw.Draw(img)
             draw_trail(d, pose, positions[i + 1 : i + 1 + ahead], scale=SCALE)
             if path:
@@ -71,7 +71,7 @@ def render_rollout(video: Path, steps: Path, out: Path | None = None) -> Path | 
                 actual = rows[j]["speed"] if j < len(rows) else None
                 d.text((6, 6), f"pred {path['horizons_s'][k]:.1f}s: {mean[k, 2]:.0f} km/h"
                        + (f" (actual {actual})" if actual is not None else ""), fill=(255, 255, 255))
-            d.text((6, 20), "colour: predicted path (band = +-1 sigma)   white: actual next 3 s",
+            d.text((6, 20), "ribbon: predicted path (halo = +-1 sigma)   white line: actual next 3 s",
                    fill=(220, 220, 220))
             enc.stdin.write(img.tobytes())
     finally:
