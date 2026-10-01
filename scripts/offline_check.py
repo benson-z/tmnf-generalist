@@ -38,6 +38,7 @@ from tmnf_train.data.index import load_manifest, load_run  # noqa: E402
 from tmnf_train.policy_model import ModelPolicy  # noqa: E402
 
 BRAKE = np.array([(a // 3) % 2 == 1 for a in range(12)])
+GAS_BRAKE = np.array([a // 6 == 1 and (a // 3) % 2 == 1 for a in range(12)])
 KS = range(-4, 7)
 
 
@@ -93,6 +94,8 @@ def check(ck: str, cfg, manifest, dev) -> dict:
     onset: dict[str, dict[int, list]] = {}
     release: dict[str, dict[int, list]] = {}
     taps: dict[str, dict[int, list]] = {}
+    tap_gas: dict[str, dict[int, list]] = {}
+    demo_gas: list[float] = []
     for r in runs:
         name, n = r["name"], r["n"]
         lab = load_run(cfg.data, name)
@@ -104,6 +107,7 @@ def check(ck: str, cfg, manifest, dev) -> dict:
         for h, P in heads.items():
             on, off, tp = (onset.setdefault(h, {k: [] for k in KS}), release.setdefault(h, {k: [] for k in KS}),
                            taps.setdefault(h, {k: [] for k in KS}))
+            tg = tap_gas.setdefault(h, {k: [] for k in KS})
             ok = ~np.isnan(P).any(1)
             for t in range(4, n - 7):
                 if not ok[t - 4:t + 7].all():
@@ -119,7 +123,13 @@ def check(ck: str, cfg, manifest, dev) -> dict:
                         and slip[t:t + 11].max() > 10):
                     for k in KS:
                         tp[k].append(P[t + k, BRAKE].sum())
-    res = {"checkpoint": Path(ck).stem, "heads": {}}
+                        tg[k].append(P[t + k, GAS_BRAKE].sum() / max(P[t + k, BRAKE].sum(), 1e-6))
+                    if h == "policy":
+                        k_end = t
+                        while k_end < n and br[k_end]:
+                            k_end += 1
+                        demo_gas.append(float((a[t:k_end] // 6 == 1).mean()))
+    res = {"checkpoint": Path(ck).stem, "heads": {}, "demo_gas_in_tap": float(np.mean(demo_gas)) if demo_gas else None}
     for h in onset:
         on = {k: float(np.mean(v)) for k, v in onset[h].items()}
         off = {k: float(np.mean(v)) for k, v in release[h].items()}
@@ -131,6 +141,8 @@ def check(ck: str, cfg, manifest, dev) -> dict:
             "release_curve": off, "release_cross_step": next((k for k in sorted(off) if off[k] < 0.5), None),
             "tap_curve": tp, "tap_p_brake_at_tap": tp[0], "tap_p_brake_next": tp[1],
             "tap_p_brake_median_at_tap": float(np.median(taps[h][0])) if taps[h][0] else None,
+            # Of the brake probability at a demo tap, the share that keeps gas held.
+            "tap_p_gas_given_brake": {k: float(np.mean(v)) for k, v in tap_gas[h].items()},
         }
     return res
 
@@ -150,6 +162,9 @@ def main() -> None:
                   f"{ {k: round(x, 3) for k, x in v['release_curve'].items()} }")
             print(f"    P(brake) at tap {v['tap_p_brake_at_tap']:.3f}, next step {v['tap_p_brake_next']:.3f}, "
                   f"median at tap {v['tap_p_brake_median_at_tap']:.3f}")
+            g = v["tap_p_gas_given_brake"]
+            print(f"    P(gas | brake) at tap {g[0]:.3f}, k=1..3 {g[1]:.3f} {g[2]:.3f} {g[3]:.3f} "
+                  f"(demo holds gas in {res['demo_gas_in_tap']:.0%} of tap steps)")
         out = Path(ck).parents[1] / "offline" / f"{res['checkpoint']}.json"
         out.parent.mkdir(exist_ok=True)
         out.write_text(json.dumps(res, indent=1))
