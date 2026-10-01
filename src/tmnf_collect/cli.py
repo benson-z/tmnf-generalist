@@ -383,6 +383,68 @@ def _cmd_harvest(args: argparse.Namespace) -> int:
     return 0 if result.picked else 1
 
 
+def _parse_quotas(text: str) -> dict[int, int]:
+    """``"Tech=875,SpeedTech=625"`` -> {7: 875, 8: 625}."""
+    quotas: dict[int, int] = {}
+    for part in text.split(","):
+        if not part.strip():
+            continue
+        name, _, count = part.partition("=")
+        (tag,) = tmx.parse_tags(name)
+        quotas[tag] = int(count)
+    return quotas
+
+
+def _cmd_harvest_quota(args: argparse.Namespace) -> int:
+    try:
+        quotas = _parse_quotas(args.quota)
+    except (tmx.TmxError, ValueError) as exc:
+        print(f"bad --quota: {exc}")
+        return 2
+    tmx.COURTESY_DELAY = args.delay
+    replays_dir = Path(args.out)
+    manifest = Path(args.manifest) if args.manifest else replays_dir.parent / f"{replays_dir.name}.harvest.jsonl"
+    if args.maps_dir:
+        maps_dir = Path(args.maps_dir)
+    else:
+        maps_dir = staging.challenges_dir(detect(game=args.game, profile=args.profile))
+    have: set[int] = set()
+    for source in args.have:
+        source = Path(source)
+        names = [p.name for p in source.iterdir()] if source.is_dir() else source.read_text().split()
+        have |= {int(m.group(1)) for n in names if (m := tmx._TMX_FILE.match(n))}
+    print(f"maps -> {maps_dir}\nreplays -> {replays_dir}\nmanifest -> {manifest}\n"
+          f"skipping {len(have)} maps named in --have", flush=True)
+    started = time.monotonic()
+    state = tmx.harvest_quota(
+        maps_into=maps_dir,
+        replays_into=replays_dir,
+        manifest=manifest,
+        quotas=quotas,
+        max_scanned=args.max_scanned,
+        min_author_time=int(args.min_seconds * 1000) if args.min_seconds else None,
+        max_author_time=int(args.max_seconds * 1000) if args.max_seconds else None,
+        min_awards=args.min_awards,
+        prefer=args.prefer,
+        tries=args.tries,
+        dry_run=args.dry_run,
+        have=have,
+        log=lambda line: print(line, flush=True),
+    )
+    print(json.dumps({
+        "stop_reason": state.stop_reason,
+        "scanned": state.scanned,
+        "pages": state.pages,
+        "awards_reached": state.last_awards,
+        "filled": {tmx.tag_name(t): f"{state.filled.get(t, 0)}/{q}" for t, q in state.quotas.items()},
+        "outcomes": state.outcomes,
+        "requests": tmx.REQUESTS,
+        "minutes": round((time.monotonic() - started) / 60, 1),
+        "dry_run": args.dry_run,
+    }, indent=2), flush=True)
+    return 0
+
+
 def _cmd_video(args: argparse.Namespace) -> int:
     summary = video.render_run(
         Path(args.run),
@@ -790,6 +852,29 @@ def main(argv: list[str] | None = None) -> int:
         help="show what would be downloaded without downloading it",
     )
     p_harvest.set_defaults(func=_cmd_harvest)
+
+    p_hq = sub.add_parser(
+        "harvest-quota",
+        help="fill per-tag quotas of keyboard replays from the top of TMX, resumably",
+    )
+    p_hq.add_argument("--out", required=True, help="replay folder (pad runs go to <out>.rejected/pad)")
+    p_hq.add_argument("--quota", required=True, help="e.g. Tech=875,SpeedTech=625,Race=500")
+    p_hq.add_argument("--max-scanned", type=int, default=20000,
+                      help="stop after reading this many maps from the search, whatever is filled")
+    p_hq.add_argument("--manifest", default=None, help="default <out>.harvest.jsonl; resumes from it")
+    p_hq.add_argument("--maps-dir", default=None, help="default: the game's tmnf-collect Challenges folder")
+    p_hq.add_argument("--have", action="append", default=[],
+                      help="a folder of maps, or a file listing their names, to skip (repeatable)")
+    p_hq.add_argument("--min-awards", type=int, default=5)
+    p_hq.add_argument("--min-seconds", type=float, default=25.0)
+    p_hq.add_argument("--max-seconds", type=float, default=75.0)
+    p_hq.add_argument("--prefer", default="median", choices=["median", "best", "author"])
+    p_hq.add_argument("--tries", type=int, default=3,
+                      help="runs to try per map until one is keyboard and on the current map version")
+    p_hq.add_argument("--delay", type=float, default=1.0, help="seconds between requests")
+    p_hq.add_argument("--dry-run", action="store_true",
+                      help="walk the search and count tags only (one request per 100 maps)")
+    p_hq.set_defaults(func=_cmd_harvest_quota)
 
     p_filter = sub.add_parser(
         "filter",

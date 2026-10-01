@@ -154,15 +154,37 @@ class HarvestResult:
 # ----------------------------------------------------------------- transport
 
 
+REQUESTS = 0  # requests sent this process, for reporting
+BACKOFF_S = 60.0  # first wait after the site says it is busy; doubles each retry
+BUSY_RETRIES = 3
+
+
 def _get(url: str) -> bytes:
+    """One GET, then the courtesy delay.
+
+    A 429 or 5xx means the site is busy: wait (Retry-After if given, else
+    BACKOFF_S, doubling) and try again a few times before giving up, rather
+    than moving straight on to the next request.
+    """
+    global REQUESTS
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-            return response.read()
-    except (urllib.error.URLError, TimeoutError) as exc:
-        raise TmxError(f"{url}: {exc}") from exc
-    finally:
-        time.sleep(COURTESY_DELAY)
+    for attempt in range(BUSY_RETRIES + 1):
+        REQUESTS += 1
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            if (exc.code == 429 or exc.code >= 500) and attempt < BUSY_RETRIES:
+                retry_after = exc.headers.get("Retry-After", "") if exc.headers else ""
+                wait = float(retry_after) if retry_after.isdigit() else BACKOFF_S * 2**attempt
+                time.sleep(wait)
+                continue
+            raise TmxError(f"{url}: {exc}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise TmxError(f"{url}: {exc}") from exc
+        finally:
+            time.sleep(COURTESY_DELAY)
+    raise AssertionError("unreachable")
 
 
 def _get_json(url: str) -> dict:
@@ -208,9 +230,36 @@ def search_tracks(
     practice the two are simple opposites.
     """
     found: list[TmxTrack] = []
-    after: int | None = None
+    for track in iter_tracks(
+        min_author_time=min_author_time,
+        max_author_time=max_author_time,
+        min_awards=min_awards,
+    ):
+        if exclude_tags and set(track.tags) & set(exclude_tags):
+            continue
+        if include_tags and not set(track.tags) & set(include_tags):
+            continue
+        found.append(track)
+        if len(found) >= limit:
+            break
+    return found
 
-    while len(found) < limit:
+
+def iter_tracks(
+    *,
+    min_author_time: int | None = None,
+    max_author_time: int | None = None,
+    min_awards: int = 0,
+    on_page=None,
+):
+    """Maps ordered by award count, best first, one API page at a time.
+
+    Stops at the first map below ``min_awards``. TMX holds millions of maps, so
+    a caller must also stop on its own count; this never walks to the end by
+    design. ``on_page(rows_in_page, awards_of_last_row)`` is called per page.
+    """
+    after: int | None = None
+    while True:
         params = {
             "fields": TRACK_FIELDS,
             "count": PAGE,
@@ -226,25 +275,19 @@ def search_tracks(
         payload = _get_json(f"{TRACKS_API}?{urllib.parse.urlencode(params)}")
         rows = payload.get("Results") or []
         if not rows:
-            break
+            return
+        if on_page is not None:
+            on_page(len(rows), int(rows[-1].get("Awards") or 0))
 
         for row in rows:
             track = _track_from(row)
             if track.awards < min_awards:
-                return found  # ordering guarantees nothing better follows
-            if exclude_tags and set(track.tags) & set(exclude_tags):
-                continue
-            if include_tags and not set(track.tags) & set(include_tags):
-                continue
-            found.append(track)
-            if len(found) >= limit:
-                break
+                return  # ordering guarantees nothing better follows
+            yield track
 
         after = int(rows[-1]["TrackId"])
         if not payload.get("More"):
-            break
-
-    return found
+            return
 
 
 def find_by_uid(map_uid: str) -> TmxTrack | None:
@@ -331,8 +374,12 @@ def download_track(
     return target, parsed[0]
 
 
-def download_replay(replay: TmxReplay, into: Path, *, expect_uid: str) -> Path:
-    """Download a replay and check it belongs to the map we think it does."""
+def download_replay(replay: TmxReplay, into: Path, *, expect_uid: str | None) -> Path:
+    """Download a replay and check it belongs to the map we think it does.
+
+    ``expect_uid=None`` skips that check, for a caller that reads the map UID
+    from the replay and checks the map against it instead.
+    """
     into.mkdir(parents=True, exist_ok=True)
     target = into / f"tmx-{replay.replay_id}.Replay.Gbx"
 
@@ -353,7 +400,7 @@ def download_replay(replay: TmxReplay, into: Path, *, expect_uid: str) -> Path:
         # and move on: one bad download must not end a harvest of thousands.
         target.unlink(missing_ok=True)
         raise TmxError(f"replay {replay.replay_id}: {exc}") from exc
-    if info.map_uid != expect_uid:
+    if expect_uid is not None and info.map_uid != expect_uid:
         target.unlink(missing_ok=True)
         raise TmxError(
             f"replay {replay.replay_id} is for map {info.map_uid}, not {expect_uid}"
@@ -485,3 +532,191 @@ def harvest(
         )
 
     return result
+
+
+# ------------------------------------------------------------- quota harvest
+
+
+def tag_key(track: TmxTrack) -> int:
+    """The tag a map counts towards: its first, with no tag counted as Race (0).
+
+    Well-awarded maps carry exactly one tag, and Race is what TMX shows for a
+    map whose author picked none.
+    """
+    return track.tags[0] if track.tags else 0
+
+
+def candidates(replays: list[TmxReplay], track: TmxTrack, *, prefer: str, tries: int) -> list[TmxReplay]:
+    """The run ``choose_replay`` picks, then its nearest neighbours in time.
+
+    About 30% of median runs are driven on a pad; trying a neighbour keeps the
+    map instead of losing it.
+    """
+    first = choose_replay(replays, track, prefer=prefer)
+    if first is None:
+        return []
+    fastest = replays[0].time_ms
+    usable = [r for r in replays if r.time_ms <= fastest * SLOW_FACTOR] or [replays[0]]
+    i = next((k for k, r in enumerate(usable) if r.replay_id == first.replay_id), 0)
+    order = [first]
+    for step in range(1, len(usable)):
+        for j in (i + step, i - step):
+            if 0 <= j < len(usable):
+                order.append(usable[j])
+    return order[:tries]
+
+
+@dataclass
+class QuotaHarvest:
+    quotas: dict[int, int]
+    filled: dict[int, int] = field(default_factory=dict)
+    scanned: int = 0  # maps the walk read from the search
+    pages: int = 0
+    last_awards: int | None = None
+    stop_reason: str = ""
+    outcomes: dict[str, int] = field(default_factory=dict)
+
+    def full(self, tag: int) -> bool:
+        return self.filled.get(tag, 0) >= self.quotas.get(tag, 0)
+
+    def done(self) -> bool:
+        return all(self.full(t) for t in self.quotas)
+
+
+def harvest_quota(
+    *,
+    maps_into: Path,
+    replays_into: Path,
+    manifest: Path,
+    quotas: dict[int, int],
+    max_scanned: int,
+    min_author_time: int | None = None,
+    max_author_time: int | None = None,
+    min_awards: int = 0,
+    prefer: str = "median",
+    tries: int = 3,
+    dry_run: bool = False,
+    max_consecutive_errors: int = 10,
+    have: set[int] = frozenset(),
+    log=print,
+) -> QuotaHarvest:
+    """Fill per-tag quotas of keyboard demonstrations from the top of TMX.
+
+    Walks maps by awards, best first, and stops as soon as every quota is full,
+    awards drop below ``min_awards``, or ``max_scanned`` maps have been read --
+    never the whole site. A map is skipped if its tag's quota is full, if it is
+    already in ``maps_into`` or ``have`` (track ids of an earlier corpus), or if
+    ``manifest`` has it (an earlier run of this harvest, so the walk resumes).
+
+    For each map it tries: its leaderboard (1 request), the map (1 request),
+    then up to ``tries`` runs near the median (1 request each) until one was
+    driven on a keyboard on this version of the map. Other runs go to
+    ``<replays_into>.rejected/<pad|old_version|...>``; a map with no usable run
+    is deleted again. Every map gets one manifest line.
+
+    ``dry_run`` only walks the search and counts tags: one request per 100 maps.
+    """
+    from .filter import KEYBOARD, classify_replay  # noqa: PLC0415 (avoids a cycle at import)
+
+    state = QuotaHarvest(quotas=dict(quotas))
+    seen: set[int] = set()
+    if manifest.is_file():
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            seen.add(int(row["track"]))
+            if row.get("outcome") == "kept":
+                state.filled[row["tag"]] = state.filled.get(row["tag"], 0) + 1
+    existing = set(have) | {
+        int(m.group(1))
+        for p in (maps_into.iterdir() if maps_into.is_dir() else ())
+        if (m := _TMX_FILE.match(p.name))
+    }
+    rejected = replays_into.parent / f"{replays_into.name}.rejected"
+
+    def on_page(rows: int, awards: int) -> None:
+        state.pages += 1
+        state.last_awards = awards
+        fill = " ".join(f"{tag_name(t)} {state.filled.get(t, 0)}/{q}" for t, q in state.quotas.items())
+        log(f"page {state.pages}: scanned {state.scanned + rows}, awards now {awards}, "
+            f"requests {REQUESTS} | {fill}")
+
+    def record(track: TmxTrack, outcome: str, **extra) -> None:
+        state.outcomes[outcome] = state.outcomes.get(outcome, 0) + 1
+        if dry_run:
+            return
+        with manifest.open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"track": track.track_id, "tag": tag_key(track), "awards": track.awards,
+                                "author_ms": track.author_time, "outcome": outcome, **extra}) + "\n")
+
+    errors_in_row = 0
+    state.stop_reason = "search exhausted or awards below threshold"
+    for track in iter_tracks(min_author_time=min_author_time, max_author_time=max_author_time,
+                             min_awards=min_awards, on_page=on_page):
+        state.scanned += 1
+        tag = tag_key(track)
+        if state.done():
+            state.stop_reason = "all quotas full"
+            break
+        if state.scanned > max_scanned:
+            state.stop_reason = f"scanned {max_scanned} maps"
+            break
+        if tag not in state.quotas or state.full(tag):
+            continue
+        if track.track_id in existing or track.track_id in seen:
+            state.outcomes["already_have"] = state.outcomes.get("already_have", 0) + 1
+            continue
+        seen.add(track.track_id)
+        if dry_run:
+            state.filled[tag] = state.filled.get(tag, 0) + 1
+            continue
+
+        map_path = None
+        try:
+            replays = track_replays(track.track_id)
+            if not replays:
+                record(track, "no_replays")
+                errors_in_row = 0
+                continue
+            map_path, uid = download_track(track, maps_into)
+            kept = None
+            skipped: dict[str, list[int]] = {}
+            for replay in candidates(replays, track, prefer=prefer, tries=tries):
+                path = download_replay(replay, replays_into, expect_uid=None)
+                # A leaderboard keeps runs driven on earlier versions of a map,
+                # which cannot be re-driven on the current one.
+                kind = OLD_VERSION if read_replay(path).map_uid != uid else classify_replay(path)
+                if kind == KEYBOARD:
+                    kept = replay
+                    break
+                kind = kind or "unreadable"
+                skipped.setdefault(kind, []).append(replay.replay_id)
+                (rejected / kind).mkdir(parents=True, exist_ok=True)
+                path.replace(rejected / kind / path.name)
+            if kept is None:
+                map_path.unlink(missing_ok=True)
+                map_path = None
+                record(track, "no_usable_run", skipped=skipped)
+            else:
+                state.filled[tag] = state.filled.get(tag, 0) + 1
+                record(track, "kept", replay=kept.replay_id, replay_ms=kept.time_ms,
+                       user=kept.user, map_uid=uid, skipped=skipped)
+                map_path = None
+            errors_in_row = 0
+        except TmxError as exc:
+            if map_path is not None:  # downloaded, but no run was kept for it
+                map_path.unlink(missing_ok=True)
+            record(track, "error", reason=str(exc)[:300])
+            errors_in_row += 1
+            if errors_in_row >= max_consecutive_errors:
+                state.stop_reason = f"{errors_in_row} errors in a row; last: {exc}"
+                break
+    else:
+        if state.done():
+            state.stop_reason = "all quotas full"
+    return state
+
+
+OLD_VERSION = "old_version"
+_TMX_FILE = __import__("re").compile(r"tmx-(\d+)\.Challenge\.Gbx$")
