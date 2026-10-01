@@ -14,6 +14,9 @@ services:
       - "${VIDEO_GID:-44}"
     devices:
       - /dev/dri:/dev/dri
+    # SELinux hosts (Fedora) would deny the bind mounts and /dev/dri; no-op elsewhere.
+    security_opt:
+      - label=disable
     shm_size: 2g
     env_file:
       - .env

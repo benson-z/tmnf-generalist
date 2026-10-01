@@ -49,6 +49,13 @@ mods:
 - id: TMInterface
 YAML
 fi
+# Where the game is installed. Without it TMLoader's first launch stops on a
+# dialog asking you to start the original game once, so it can find it.
+mkdir -p "$TML/database/TmForever/products/TmForever"
+if [ ! -f "$TML/database/TmForever/products/TmForever/settings.yaml" ]; then
+    printf "install: 'C:/Program Files (x86)/TmNationsForever'\n" \
+        > "$TML/database/TmForever/products/TmForever/settings.yaml"
+fi
 if [ ! -f "$TML/config.yaml" ]; then
     cat > "$TML/config.yaml" <<'YAML'
 default_profiles:
