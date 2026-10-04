@@ -10,7 +10,7 @@
     {
       "name": "dashboard-linux",
       "runtimeExecutable": "env",
-      "runtimeArgs": ["TMNF_STORAGE=/home/benson/tmnf-ml", ".venv/bin/python", "-m", "tmnf_train", "dashboard", "--config", "configs/v2_chunk.yaml", "--port", "8765", "--host", "0.0.0.0", "--follow"],
+      "runtimeArgs": ["TMNF_STORAGE=/home/benson/tmnf-ml", ".venv/bin/python", "-m", "tmnf_train", "dashboard", "--config", "configs/v2_chunk_path3d_c23.yaml", "--port", "8765", "--host", "0.0.0.0", "--follow"],
       "port": 8765
     }
   ]

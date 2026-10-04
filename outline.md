@@ -2,8 +2,8 @@
 
 Every technique on the collection path, organised by pipeline stage:
 `harvest → filter → collect → verify`, with `stats`, `clean` and `video` for
-looking at what came out. The README covers how to use it; this is the
-reasoning and the measurements behind it.
+looking at what came out. [src/tmnf_collect/README.md](src/tmnf_collect/README.md)
+covers how to use it; this is the reasoning and the measurements behind it.
 
 Source layout under `src/tmnf_collect/`:
 

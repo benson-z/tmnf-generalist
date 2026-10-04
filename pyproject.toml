@@ -1,7 +1,7 @@
 [project]
-name = "tmnf-collect"
+name = "tmnf-generalist"
 version = "0.1.0"
-description = "Scriptable TrackMania Nations Forever data collection for ML training"
+description = "A TrackMania Nations Forever driver that generalizes to unseen tracks"
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",

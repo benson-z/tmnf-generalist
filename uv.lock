@@ -2,19 +2,19 @@ version = 1
 revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
-    "python_full_version >= '3.12' and extra != 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version < '3.12' and extra != 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version >= '3.14' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version == '3.13.*' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version == '3.12.*' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version >= '3.12' and sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "extra != 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
+    "python_full_version >= '3.12' and extra != 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version < '3.12' and extra != 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version >= '3.14' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version >= '3.12' and sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "extra != 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
 ]
 conflicts = [[
-    { package = "tmnf-collect", extra = "train" },
-    { package = "tmnf-collect", extra = "train-rocm" },
+    { package = "tmnf-generalist", extra = "train" },
+    { package = "tmnf-generalist", extra = "train-rocm" },
 ]]
 
 [manifest]
@@ -373,9 +373,9 @@ name = "networkx"
 version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version < '3.12' and extra != 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
+    "python_full_version < '3.12' and extra != 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6a/51/63fe664f3908c97be9d2e4f1158eb633317598cfa6e1fc14af5383f17512/networkx-3.6.1.tar.gz", hash = "sha256:26b7c357accc0c8cde558ad486283728b65b6a95d85ee1cd66bafab4c8168509", size = 2517025, upload-time = "2025-12-08T17:02:39.908Z" }
 wheels = [
@@ -387,11 +387,11 @@ name = "networkx"
 version = "3.7"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version >= '3.12' and extra != 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version >= '3.14' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version == '3.13.*' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version == '3.12.*' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
-    "python_full_version >= '3.12' and sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra != 'extra-12-tmnf-collect-train-rocm'",
+    "python_full_version >= '3.12' and extra != 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version >= '3.14' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version == '3.13.*' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
+    "python_full_version >= '3.12' and sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra != 'extra-15-tmnf-generalist-train-rocm'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/dc/76/3af777226b63a5e64a6b36b1ec5855c14e2b94a37096d4760e595fc43511/networkx-3.7.tar.gz", hash = "sha256:fd77a511bd90f39f3d016351345b52cf5319b813bdca01de3f755d3cca62e96a", size = 1866482, upload-time = "2026-09-21T16:45:16.974Z" }
 wheels = [
@@ -802,7 +802,7 @@ name = "pygbx"
 version = "0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "python-lzo", marker = "sys_platform == 'never' or (extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
+    { name = "python-lzo", marker = "sys_platform == 'never' or (extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1e/13/701aed040d36702878abf93a9072fbb1d28ef09244916251c4bc0f10201e/pygbx-0.3.tar.gz", hash = "sha256:83a944b91340e5738f196344c2a9a6d4485d020d7d64d61f03bb6718ca0b2212", size = 32282, upload-time = "2021-05-12T18:43:46.49Z" }
 
@@ -992,7 +992,7 @@ wheels = [
 ]
 
 [[package]]
-name = "tmnf-collect"
+name = "tmnf-generalist"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -1010,8 +1010,8 @@ dependencies = [
 train = [
     { name = "onnx", marker = "sys_platform == 'win32'" },
     { name = "onnxruntime-directml", marker = "sys_platform == 'win32'" },
-    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train') or (extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
-    { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train') or (extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
+    { name = "torch", version = "2.11.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train') or (extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
+    { name = "torch", version = "2.14.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train') or (extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
     { name = "triton-windows", marker = "sys_platform == 'win32'" },
 ]
 train-rocm = [
@@ -1022,14 +1022,14 @@ train-rocm = [
     { name = "rocm-sdk-core", marker = "sys_platform != 'darwin'" },
     { name = "rocm-sdk-device-gfx1150", marker = "sys_platform != 'darwin'" },
     { name = "rocm-sdk-libraries", marker = "sys_platform != 'darwin'" },
-    { name = "torch", version = "2.13.0+rocm10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next" }, extra = ["device-gfx1150"], marker = "(sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train-rocm') or (extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
+    { name = "torch", version = "2.13.0+rocm10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next" }, extra = ["device-gfx1150"], marker = "(sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train-rocm') or (extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
     { name = "triton", version = "3.8.0+git4cff872c.rocm10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next" }, marker = "sys_platform != 'darwin'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "amd-torch-device-gfx1150", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
-    { name = "amd-torch-device-gfx115x", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
+    { name = "amd-torch-device-gfx1150", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
+    { name = "amd-torch-device-gfx115x", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
     { name = "lzokay", specifier = ">=2.1" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "onnx", marker = "sys_platform == 'win32' and extra == 'train'", specifier = ">=1.17" },
@@ -1039,15 +1039,15 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "qoi", specifier = ">=0.7" },
     { name = "rich", specifier = ">=13.9" },
-    { name = "rocm", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
-    { name = "rocm-bootstrap", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
-    { name = "rocm-sdk-core", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
-    { name = "rocm-sdk-device-gfx1150", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
-    { name = "rocm-sdk-libraries", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
+    { name = "rocm", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
+    { name = "rocm-bootstrap", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
+    { name = "rocm-sdk-core", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
+    { name = "rocm-sdk-device-gfx1150", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
+    { name = "rocm-sdk-libraries", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
     { name = "torch", marker = "sys_platform == 'darwin' and extra == 'train'", specifier = ">=2.7" },
-    { name = "torch", marker = "sys_platform != 'darwin' and extra == 'train'", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "tmnf-collect", extra = "train" } },
-    { name = "torch", extras = ["device-gfx1150"], marker = "sys_platform != 'darwin' and extra == 'train-rocm'", specifier = ">=2.13", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
-    { name = "triton", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-collect", extra = "train-rocm" } },
+    { name = "torch", marker = "sys_platform != 'darwin' and extra == 'train'", specifier = ">=2.7", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "tmnf-generalist", extra = "train" } },
+    { name = "torch", extras = ["device-gfx1150"], marker = "sys_platform != 'darwin' and extra == 'train-rocm'", specifier = ">=2.13", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
+    { name = "triton", marker = "sys_platform != 'darwin' and extra == 'train-rocm'", index = "https://stable.repo.amd.com/rocm/whl-next", conflict = { package = "tmnf-generalist", extra = "train-rocm" } },
     { name = "triton-windows", marker = "sys_platform == 'win32' and extra == 'train'", specifier = "==3.6.0.post26" },
     { name = "zstandard", specifier = ">=0.22" },
 ]
@@ -1065,12 +1065,12 @@ resolution-markers = [
 ]
 dependencies = [
     { name = "cuda-bindings", marker = "sys_platform == 'linux'" },
-    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra == 'extra-12-tmnf-collect-train') or (extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
+    { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra == 'extra-15-tmnf-generalist-train') or (extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
     { name = "filelock", marker = "sys_platform != 'darwin'" },
     { name = "fsspec", marker = "sys_platform != 'darwin'" },
     { name = "jinja2", marker = "sys_platform != 'darwin'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train') or (python_full_version >= '3.12' and extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm') or (sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
-    { name = "networkx", version = "3.7", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train') or (python_full_version < '3.12' and extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm') or (sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train') or (python_full_version >= '3.12' and extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm') or (sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
+    { name = "networkx", version = "3.7", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train') or (python_full_version < '3.12' and extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm') or (sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux'" },
     { name = "nvidia-cusparselt-cu12", marker = "sys_platform == 'linux'" },
     { name = "nvidia-nccl-cu12", marker = "sys_platform == 'linux'" },
@@ -1113,9 +1113,9 @@ dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
     { name = "jinja2" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-12-tmnf-collect-train-rocm') or (extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
-    { name = "networkx", version = "3.7", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and extra == 'extra-12-tmnf-collect-train-rocm') or (extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
-    { name = "rocm", extra = ["libraries"], marker = "extra == 'extra-12-tmnf-collect-train-rocm'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and extra == 'extra-15-tmnf-generalist-train-rocm') or (extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
+    { name = "networkx", version = "3.7", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and extra == 'extra-15-tmnf-generalist-train-rocm') or (extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
+    { name = "rocm", extra = ["libraries"], marker = "extra == 'extra-15-tmnf-generalist-train-rocm'" },
     { name = "rocm-bootstrap" },
     { name = "setuptools" },
     { name = "sympy" },
@@ -1151,8 +1151,8 @@ dependencies = [
     { name = "filelock", marker = "sys_platform == 'darwin'" },
     { name = "fsspec", marker = "sys_platform == 'darwin'" },
     { name = "jinja2", marker = "sys_platform == 'darwin'" },
-    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train') or (python_full_version >= '3.12' and extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm') or (sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
-    { name = "networkx", version = "3.7", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and sys_platform == 'darwin' and extra == 'extra-12-tmnf-collect-train') or (python_full_version < '3.12' and extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm') or (sys_platform != 'darwin' and extra == 'extra-12-tmnf-collect-train' and extra == 'extra-12-tmnf-collect-train-rocm')" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train') or (python_full_version >= '3.12' and extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm') or (sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
+    { name = "networkx", version = "3.7", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and sys_platform == 'darwin' and extra == 'extra-15-tmnf-generalist-train') or (python_full_version < '3.12' and extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm') or (sys_platform != 'darwin' and extra == 'extra-15-tmnf-generalist-train' and extra == 'extra-15-tmnf-generalist-train-rocm')" },
     { name = "setuptools", marker = "sys_platform == 'darwin'" },
     { name = "sympy", marker = "sys_platform == 'darwin'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin'" },
