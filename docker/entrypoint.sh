@@ -5,6 +5,10 @@ set -euo pipefail
 
 # Stale sockets from a previous run of this container would fool the checks below.
 rm -rf "$XDG_RUNTIME_DIR"
+# /tmp survives a container restart. Xwayland's lock files and sockets from the
+# last run would push it to :1, :2, ... while the game uses DISPLAY=:0, and
+# wined3d with no X server fails as TmForever's "Could not find DirectX9".
+rm -f /tmp/.X*-lock /tmp/.X11-unix/X*
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
 mkdir -p "$HOME/.config/wayvnc"
 
