@@ -5,7 +5,7 @@ layout, how the three streams (frames, 20 Hz samples, 100 Hz input ticks) line
 up, run lengths, map repeats, per-key press/gap histograms in ticks, byte
 counts, and a measured H.265 re-encode projection.
 
-    python -m tmnf_train.inspect_data Z:/application_storage/tmnf-ml/train_data/corpus2 \
+    python -m tmnf_train.inspect_data "$TMNF_STORAGE"/train_data/corpus2 \
         --out docs/data_report.json
 """
 

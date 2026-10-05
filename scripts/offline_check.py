@@ -148,7 +148,7 @@ def check(ck: str, cfg, manifest, dev) -> dict:
 
 
 def main() -> None:
-    cfg = load(REPO / "configs/v2.yaml", ["data.loader_workers=4"])
+    cfg = load(REPO / "configs/v2_chunk_path3d_c23.yaml", ["data.loader_workers=4"])
     manifest = load_manifest(cfg.data)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     for ck in sys.argv[1:]:

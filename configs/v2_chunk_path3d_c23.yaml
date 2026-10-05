@@ -7,8 +7,8 @@
 # extra epochs bought pace and lost reliability, and validation loss can't
 # see that. Own index (work_path3d_c23).
 data:
-  corpus: Z:/application_storage/tmnf-ml/train_data/corpus23
-  work_dir: Z:/application_storage/tmnf-ml/work_path3d_c23
+  corpus: $TMNF_STORAGE/train_data/corpus23
+  work_dir: $TMNF_STORAGE/work_path3d_c23
   downsample: 1
   window: 16
   frame_stride: 1

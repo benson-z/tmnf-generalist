@@ -1,6 +1,6 @@
 # corpus2: data inspection report (step 1)
 
-Source: `Z:\application_storage\tmnf-ml\train_data\corpus2`. Produced by
+Source: `$TMNF_STORAGE/train_data/corpus2`. Produced by
 `python -m tmnf_train inspect <corpus> --out docs/data_report.json`, which reads
 every run directory. The full numbers are in [data_report.json](data_report.json).
 

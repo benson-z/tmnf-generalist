@@ -15,41 +15,44 @@ from typing import Any
 
 import yaml
 
-STORAGE = Path("Z:/application_storage/tmnf-ml")
-# Paths in configs and checkpoints are written against the Windows NAS drive.
-# With TMNF_STORAGE set (e.g. ~/tmnf-ml on Linux, /tmnf-ml in the ser5
-# container), that prefix is swapped for it when a config is loaded, so the
-# same config files work on every machine.
-_STORAGE_PREFIX = "Z:/application_storage/tmnf-ml"
+STORAGE = Path("$TMNF_STORAGE")
+# Paths in configs and checkpoints are written against a storage root,
+# ``$TMNF_STORAGE/...``. When a config is loaded that prefix is swapped for the
+# TMNF_STORAGE environment variable, or ``data`` (relative to the working
+# directory) if it is unset, so the same config files work on every machine.
+_STORAGE_PREFIX = "$TMNF_STORAGE"
+_DEFAULT_ROOT = "data"
+# Checkpoints written before the prefix was introduced name their paths
+# against this Windows drive; they are mapped the same way.
+_LEGACY_PREFIX = "Z:/application_storage/tmnf-ml"
+
+
+def _root() -> Path:
+    return Path(os.path.expanduser(os.environ.get("TMNF_STORAGE") or _DEFAULT_ROOT))
 
 
 def storage_path(p: str) -> str:
-    """``p`` with the Windows storage prefix swapped for $TMNF_STORAGE, if set."""
-    root = os.environ.get("TMNF_STORAGE")
-    if not root:
-        return p
+    """``p`` with the storage prefix swapped for this machine's storage root."""
     q = p.replace("\\", "/")
-    if q.lower().startswith(_STORAGE_PREFIX.lower()):
-        return str(Path(os.path.expanduser(root)) / q[len(_STORAGE_PREFIX):].lstrip("/"))
+    for prefix in (_STORAGE_PREFIX, _LEGACY_PREFIX):
+        if q.lower().startswith(prefix.lower()):
+            return str(_root() / q[len(prefix):].lstrip("/"))
     return p
 
 
 def canonical_path(p: str) -> str:
     """The inverse of :func:`storage_path`: a local storage path in its
-    machine-independent ``Z:/application_storage/tmnf-ml/...`` form, so it can
-    be handed to another machine (e.g. the policy server)."""
-    root = os.environ.get("TMNF_STORAGE")
-    if root:
-        base = Path(os.path.expanduser(root)).resolve()
-        try:
-            rel = Path(p).resolve().relative_to(base)
+    machine-independent ``$TMNF_STORAGE/...`` form, so it can be handed to
+    another machine (e.g. the policy server)."""
+    root = _root()
+    try:
+        rel = Path(p).resolve().relative_to(root.resolve())
+    except ValueError:
+        try:  # a symlinked subtree (e.g. runs/ -> NAS) resolves elsewhere
+            rel = Path(os.path.abspath(p)).relative_to(Path(os.path.abspath(root)))
         except ValueError:
-            try:  # a symlinked subtree (e.g. runs/ -> NAS) resolves elsewhere
-                rel = Path(os.path.abspath(p)).relative_to(Path(os.path.abspath(os.path.expanduser(root))))
-            except ValueError:
-                return p
-        return f"{_STORAGE_PREFIX}/{rel.as_posix()}"
-    return p.replace("\\", "/")
+            return p
+    return f"{_STORAGE_PREFIX}/{rel.as_posix()}"
 
 
 @dataclass

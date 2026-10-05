@@ -5,7 +5,10 @@ and the HUD speed alone, on data recorded by `tmnf-collect`, and evaluates it
 closed-loop in the real game on Nadeo's **B01-Race**, recording every rollout
 to video. No RL, no ghost conditioning, no per-map fine-tuning.
 
-Everything large lives under `Z:\application_storage\tmnf-ml\`:
+Everything large lives under one storage root. Config paths that start with
+`$TMNF_STORAGE` resolve to the `TMNF_STORAGE` environment variable, or to
+`data/` in the working directory if it is unset; the commands below assume it
+is set. The layout:
 
 ```
 train_data/corpus2/      the recorded corpus (input, read-only)
@@ -22,7 +25,7 @@ uv sync --extra train
 ```
 
 ```bash
-uv run tmnf-train inspect Z:/application_storage/tmnf-ml/train_data/corpus2 --out docs/data_report.json
+uv run tmnf-train inspect "$TMNF_STORAGE"/train_data/corpus2 --out docs/data_report.json
 ```
 
 ```bash
@@ -37,18 +40,19 @@ uv run tmnf-train eval --random --id smoke_random
 uv run tmnf-train train --config configs/baseline.yaml
 ```
 
-`configs/v2.yaml` is the follow-up: soft policy labels, 4 epochs, and the
-5-map eval described below.
+`configs/v2_chunk_path3d_c23.yaml` is the config behind the demos: soft policy labels,
+an 8-step action chunk head, path targets with height, 4 epochs, trained on
+corpus2 + corpus3.
 
 ```bash
-uv run tmnf-train train --config configs/v2.yaml
+uv run tmnf-train train --config configs/v2_chunk_path3d_c23.yaml
 ```
 
 `train` resumes with `--resume` (from the newest checkpoint, mid-epoch
 included). Evaluate any checkpoint on its own with:
 
 ```bash
-uv run tmnf-train eval --config configs/v2.yaml --checkpoint Z:/application_storage/tmnf-ml/runs/baseline/checkpoints/<name>.pt
+uv run tmnf-train eval --config configs/v2_chunk_path3d_c23.yaml --checkpoint "$TMNF_STORAGE"/runs/v2_chunk_path3d_c23/checkpoints/<name>.pt
 ```
 
 `configs/baseline.yaml` is the one file that sets resolution
@@ -101,13 +105,12 @@ pins itself on a wall holding gas (p≈1.0) or wanders off-course on the dirt.
 It never reaches checkpoint 1. The epoch-2 checkpoint with exact
 `recompute` inference and the same seeds does the same (4x stationary,
 9–46 s), so the KV-cache approximation is not what stops it. Videos:
-`Z:pplication_storage	mnf-ml
-unsaseline\eval\<checkpoint>ideos\`.
+`$TMNF_STORAGE/runs/baseline/eval/<checkpoint>/videos/`.
 
 ## Watching a run
 
 ```bash
-uv run tmnf-train dashboard --config configs/v2.yaml
+uv run tmnf-train dashboard --config configs/v2_chunk_path3d_c23.yaml
 ```
 
 Serves a live page on http://127.0.0.1:8765/ (standard library only; add
@@ -124,7 +127,7 @@ With `train.eval_mode: external` the trainer only writes checkpoints, and a
 second process evaluates them as they appear:
 
 ```bash
-uv run tmnf-train eval-watch --config configs/v2.yaml
+uv run tmnf-train eval-watch --config configs/v2_chunk_path3d_c23.yaml
 ```
 
 `eval.device: directml` runs the model through ONNX Runtime on the iGPU
@@ -140,7 +143,7 @@ uncertainty (`eval.overlay_path`). Each step's prediction and camera pose go
 into `steps/*.jsonl`, and
 
 ```bash
-uv run tmnf-train render-paths Z:/application_storage/tmnf-ml/runs/v2_soft/eval/<checkpoint>
+uv run tmnf-train render-paths "$TMNF_STORAGE"/runs/v2_chunk_path3d_c23/eval/<checkpoint>
 ```
 
 re-renders every rollout at 2x as `<video>_paths.mp4` with the path the car

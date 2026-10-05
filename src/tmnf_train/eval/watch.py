@@ -1,6 +1,6 @@
 """Evaluate a training run's checkpoints from a separate process.
 
-    tmnf-train eval-watch --config configs/v2.yaml
+    tmnf-train eval-watch --config configs/v2_chunk_path3d_c23.yaml
 
 With ``train.eval_mode: external`` the trainer writes a checkpoint at the end
 of every epoch and carries on; this watcher evaluates each epoch-end

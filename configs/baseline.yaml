@@ -2,8 +2,8 @@
 # src/tmnf_train/config.py. Override from the command line with
 #   --set section.key=value
 data:
-  corpus: Z:/application_storage/tmnf-ml/train_data/corpus2
-  work_dir: Z:/application_storage/tmnf-ml/work
+  corpus: $TMNF_STORAGE/train_data/corpus2
+  work_dir: $TMNF_STORAGE/work
   downsample: 1          # 1 = 320x240, 2 = 160x120 ablation
   crop_rows: null        # e.g. [40, 240] for a horizon crop (source rows)
   window: 16

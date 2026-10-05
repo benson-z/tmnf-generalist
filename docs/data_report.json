@@ -1,5 +1,5 @@
 {
- "corpus": "Z:\\application_storage\\tmnf-ml\\train_data\\corpus2",
+ "corpus": "$TMNF_STORAGE/train_data/corpus2",
  "run_dirs": 2518,
  "status": {
   "ok": 2483,

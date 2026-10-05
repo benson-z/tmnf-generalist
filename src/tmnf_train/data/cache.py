@@ -2,7 +2,7 @@
 
 ``data.source: memmap`` reads it instead of decoding video. Built with the
 same ``frames.to_input`` as every other path. Sizes for corpus2 (2.06M
-frames): 320x240 is ~475 GB, 160x120 ~119 GB, so it goes on Z: and is only
+frames): 320x240 is ~475 GB, 160x120 ~119 GB, so it goes under the storage root and is only
 worth it at the reduced resolution.
 """
 

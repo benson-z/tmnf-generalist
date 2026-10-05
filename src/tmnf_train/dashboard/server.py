@@ -1,6 +1,6 @@
 """A live progress dashboard for one training run, served on localhost.
 
-    tmnf-train dashboard --config configs/v2.yaml [--port 8765]
+    tmnf-train dashboard --config configs/v2_chunk_path3d_c23.yaml [--port 8765]
 
 Standard library only. Background samplers keep ~1 hour of hardware history:
 

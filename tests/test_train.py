@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -309,17 +310,19 @@ def test_storage_paths_follow_tmnf_storage(tmp_path, monkeypatch):
     from tmnf_train.config import canonical_path, storage_path
 
     monkeypatch.delenv("TMNF_STORAGE", raising=False)
-    assert storage_path("Z:/application_storage/tmnf-ml/runs/x") == "Z:/application_storage/tmnf-ml/runs/x"
-    assert load(None).data.corpus.startswith("Z:")
+    assert storage_path("$TMNF_STORAGE/runs/x") == str(Path("data") / "runs" / "x")
+    assert load(None).data.corpus == str(Path("data") / "train_data" / "corpus2")
     monkeypatch.setenv("TMNF_STORAGE", str(tmp_path))
     cfg = load(None)
     assert cfg.data.corpus == str(tmp_path / "train_data" / "corpus2")
     assert cfg.train.run_dir == str(tmp_path / "runs")
+    assert storage_path("$TMNF_STORAGE\\runs\\a.pt") == str(tmp_path / "runs" / "a.pt")
+    # Older checkpoints name the Windows drive the configs used to.
     assert storage_path("Z:\\application_storage\\tmnf-ml\\runs\\a.pt") == str(tmp_path / "runs" / "a.pt")
     assert storage_path("/elsewhere/a.pt") == "/elsewhere/a.pt"
     # canonical_path is the inverse, so a path can cross to another machine.
     local = str(tmp_path / "runs" / "v2" / "checkpoints" / "a.pt")
-    assert canonical_path(local) == "Z:/application_storage/tmnf-ml/runs/v2/checkpoints/a.pt"
+    assert canonical_path(local) == "$TMNF_STORAGE/runs/v2/checkpoints/a.pt"
     assert storage_path(canonical_path(local)) == local
 
 

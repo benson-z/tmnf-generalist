@@ -3,14 +3,15 @@
     tmnf-train serve-policy --port 9555            on the machine with the GPU
     eval.device: remote, eval.policy_url: host:port  on the machine with the game
 
-The game box (the ser5 Wine container) has no GPU that can run the model at
-20 Hz, so the harness there sends each captured frame over TCP and gets the
-action back; the model runs here exactly as it would locally (the same
-``ModelPolicy`` / ``ModelEpisode``, so the same seed gives the same actions).
+The game machine (e.g. the Wine container on a mini PC) may have no GPU that
+can run the model at 20 Hz, so the harness there sends each captured frame
+over TCP and gets the action back; the model runs here exactly as it would
+locally (the same ``ModelPolicy`` / ``ModelEpisode``, so the same seed gives
+the same actions).
 
-Checkpoint paths travel in their machine-independent ``Z:/application_storage/
-tmnf-ml/...`` form (see ``config.canonical_path``) and each side maps them
-onto its own storage with ``TMNF_STORAGE``.
+Checkpoint paths travel in their machine-independent ``$TMNF_STORAGE/...``
+form (see ``config.canonical_path``) and each side maps them onto its own
+storage with ``TMNF_STORAGE``.
 
 Wire format, both directions: ``u32 header length, JSON header, u32 body
 length, body`` (little-endian). One TCP connection per episode:
