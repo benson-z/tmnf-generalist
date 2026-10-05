@@ -7,7 +7,7 @@ of every epoch and carries on; this watcher evaluates each epoch-end
 checkpoint whose epoch is a multiple of ``train.eval_every_epochs``, in order,
 and appends the summary to the run's ``metrics.jsonl`` (the same single log,
 under a lock). Run it in the ROCm environment and the model and eval stay off
-the GPU that is training; see README-train.md.
+the GPU that is training.
 
 Evaluated checkpoints are remembered by the ``eval/<checkpoint>/summary.json``
 they leave behind, so restarting the watcher does not redo them. It exits by
